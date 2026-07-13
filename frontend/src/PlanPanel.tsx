@@ -97,6 +97,47 @@ function ReviseBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
   );
 }
 
+function MusicBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const tracks = (plan.ir as { tracks?: { type: string; items?: unknown[] }[] } | null)?.tracks ?? [];
+  const hasMusic = tracks.some((t) => t.type === "audio" && (t.items?.length ?? 0) > 0);
+  const submit = async () => {
+    if (!path.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.setMusic(plan.id, path.trim());
+      message.success(`配乐已设置：${r.music}（重新渲染生效）`);
+      setPath("");
+      refresh();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Space.Compact style={{ width: "100%" }}>
+      <Input
+        placeholder="配乐文件绝对路径（mp3/wav/m4a），自动循环截齐并淡入淡出"
+        value={path}
+        onChange={(e) => setPath(e.target.value)}
+        onPressEnter={submit}
+        prefix={hasMusic ? <Tag color="gold">已配乐</Tag> : undefined}
+      />
+      <Button onClick={submit} loading={busy}>设置配乐</Button>
+      {hasMusic && (
+        <Button danger
+          onClick={() => api.removeMusic(plan.id)
+            .then(() => { message.success("已移除配乐"); refresh(); })
+            .catch((e) => message.error(String(e)))}>
+          移除
+        </Button>
+      )}
+    </Space.Compact>
+  );
+}
+
 function RenderCard({ plan }: { plan: Plan }) {
   const render = plan.plan.render;
   if (!render) return null;
@@ -105,15 +146,22 @@ function RenderCard({ plan }: { plan: Plan }) {
   }
   return (
     <Card size="small" title="成片">
-      <Descriptions column={1} size="small">
-        <Descriptions.Item label="视频文件">
-          <Typography.Text code copyable>{render.video}</Typography.Text>
-        </Descriptions.Item>
-        <Descriptions.Item label="信息">
-          {render.duration?.toFixed(1)} 秒 · {render.clips} 个片段
-          {render.subtitles_burned ? " · 已烧录字幕" : ""}
-        </Descriptions.Item>
-      </Descriptions>
+      <Space direction="vertical" style={{ width: "100%" }}>
+        {render.video_url && (
+          <video controls preload="metadata" style={{ width: "100%", maxHeight: 420, background: "#000" }}
+            src={encodeURI(render.video_url)} />
+        )}
+        <Descriptions column={1} size="small">
+          <Descriptions.Item label="视频文件">
+            <Typography.Text code copyable>{render.video}</Typography.Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="信息">
+            {render.duration?.toFixed(1)} 秒 · {render.clips} 个片段
+            {render.subtitles_burned ? " · 已烧录字幕" : ""}
+            {render.music ? ` · 配乐：${render.music}` : ""}
+          </Descriptions.Item>
+        </Descriptions>
+      </Space>
     </Card>
   );
 }
@@ -250,7 +298,10 @@ export function PlanPanel({
                   )}
                 </Space>
                 {["draft", "confirmed", "executed"].includes(p.status) && (
-                  <ReviseBox plan={p} refresh={refresh} />
+                  <>
+                    <ReviseBox plan={p} refresh={refresh} />
+                    <MusicBox plan={p} refresh={refresh} />
+                  </>
                 )}
                 <DiffCard plan={p} />
                 <RenderCard plan={p} />

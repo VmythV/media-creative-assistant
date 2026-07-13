@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -126,11 +127,14 @@ async def render_plan(plan_id: int, db: Session = Depends(get_db)) -> dict:
             )
             if result.error:
                 raise RuntimeError(result.error)
+            output = dict(result.output)
+            # 浏览器内预览地址（main.py 挂载 /output → data/output）
+            output["video_url"] = f"/output/plan_{plan_id}/{Path(output['video']).name}"
             with db_session() as s:
                 row = s.get(EditPlan, plan_id)
-                row.plan = {**row.plan, "render": result.output}
+                row.plan = {**row.plan, "render": output}
                 s.commit()
-            emit("done", result.output["video"])
+            emit("done", output["video"])
         except Exception as e:  # noqa: BLE001 - 失败上报 SSE，不改方案状态
             logger.exception("方案 %s 渲染失败", plan_id)
             with db_session() as s:

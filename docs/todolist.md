@@ -87,3 +87,13 @@
 - [x] 执行接口允许 executed 状态重执行（回滚支持）
 - [x] 前端：方案卡修订输入框 + 差异展示 + 修订来源标记
 - [x] M7 验证：pytest 4 项通过（31 passed 全量）；真实指令"压缩到20秒、铺垫只留风铃、结尾只留夕阳"修订准确（diff：删 3 段、32s→20s），修订版渲染出 20s 成片
+
+## M8 背景音乐与成片预览（设计文档 §11）
+
+- [x] IR v0.2：音频轨 + MusicClip（gain/fade/loop；单条限制），校验器兼容 0.1
+- [x] `PUT/DELETE /api/plans/{plan_id}/music`（确定性写 IR，校验音频流）
+- [x] 渲染器配乐混音 pass（loop 截齐 + 音量 + 首尾 fade + amix，视频流 copy）
+- [x] Resolve：配乐随 sources 入媒体池（时间线定位为脚本 API 限制，已记录）
+- [x] `/output` 静态托管 + 渲染结果 video_url + 前端 `<video>` 内嵌预览
+- [x] 前端：方案卡配乐设置/移除入口
+- [x] M8 验证：pytest 4 项通过（35 passed 全量）；真实方案挂合成氛围配乐渲染，成片含可闻 BGM（mean −29.8dB），浏览器预览 URL 200

@@ -54,6 +54,13 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+# 成片/产物静态托管（浏览器内预览成片）；必须先于根路径挂载注册
+from app.config import settings as _settings  # noqa: E402
+
+_output_dir = _settings.data_dir / "output"
+_output_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/output", StaticFiles(directory=_output_dir), name="output")
+
 # 前端构建产物（frontend/dist）存在时由后端托管，浏览器直接访问 http://127.0.0.1:8000
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 if _frontend_dist.is_dir():

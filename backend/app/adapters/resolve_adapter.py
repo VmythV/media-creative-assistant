@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.ir.exporters import export_srt
-from app.ir.schema import EditingIR, VideoTrack
+from app.ir.schema import AudioTrack, EditingIR, VideoTrack
 
 logger = logging.getLogger("mca.resolve")
 
@@ -108,12 +108,21 @@ def execute_ir(ir: EditingIR, *, progress=None) -> dict:
 
     subtitle_result = _add_subtitles(media_pool, timeline, ir, report)
 
+    # 配乐已随 sources 一并入媒体池（脚本 API 无法可靠定位音频到时间线，用户拖入 A1 即可）
+    music = next((m for t in ir.tracks if isinstance(t, AudioTrack) for m in t.items), None)
+    music_result = None
+    if music is not None:
+        src = next(s for s in ir.sources if s.id == music.source_id)
+        music_result = {"file": Path(src.path).name, "method": "media_pool"}
+        report("music", f"配乐 {music_result['file']} 已入媒体池，拖到 A1 轨即可")
+
     pm.SaveProject()
     return {
         "project": project_name,
         "timeline": ir.project.name,
         "clips": len(clip_infos),
         "subtitles": subtitle_result,
+        "music": music_result,
     }
 
 

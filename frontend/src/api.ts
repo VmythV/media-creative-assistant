@@ -73,9 +73,11 @@ export interface PlanDiff {
 
 export interface RenderResult {
   video?: string;
+  video_url?: string;
   duration?: number;
   subtitles_burned?: boolean;
   clips?: number;
+  music?: string | null;
   error?: string;
 }
 
@@ -132,5 +134,10 @@ export const api = {
     request<{ plan_id: number }>(`/api/plans/${id}/revise`, {
       method: "POST", body: JSON.stringify({ instruction }),
     }),
+  setMusic: (id: number, path: string) =>
+    request<{ music: string }>(`/api/plans/${id}/music`, {
+      method: "PUT", body: JSON.stringify({ path }),
+    }),
+  removeMusic: (id: number) => request(`/api/plans/${id}/music`, { method: "DELETE" }),
   logs: () => request<{ logs: LogEntry[] }>("/api/logs"),
 };

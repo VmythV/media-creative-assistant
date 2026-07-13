@@ -11,7 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-IR_VERSION = "0.1"
+IR_VERSION = "0.2"
+SUPPORTED_VERSIONS = {"0.1", "0.2"}  # 0.1：无音频轨的存量方案
 
 ClipRole = Literal["opening", "build", "climax", "ending", "broll"]
 
@@ -65,10 +66,27 @@ class Subtitle(BaseModel):
         return self
 
 
+class MusicClip(BaseModel):
+    """配乐（v0.2）：铺满整条时间线，loop 截齐，首尾淡入淡出。"""
+
+    type: Literal["music"] = "music"
+    source_id: str
+    gain_db: float = Field(default=-16.0, ge=-60, le=12)
+    fade_in: float = Field(default=1.0, ge=0)
+    fade_out: float = Field(default=2.0, ge=0)
+    loop: bool = True
+
+
 class VideoTrack(BaseModel):
     type: Literal["video"] = "video"
     index: int = Field(ge=1)
     items: list[Clip] = []
+
+
+class AudioTrack(BaseModel):
+    type: Literal["audio"] = "audio"
+    index: int = Field(ge=1)
+    items: list[MusicClip] = []
 
 
 class SubtitleTrack(BaseModel):
@@ -81,14 +99,14 @@ class EditingIR(BaseModel):
     version: str
     project: ProjectSettings
     sources: list[Source] = []
-    tracks: list[VideoTrack | SubtitleTrack] = []
-    render: None = None  # v0.1 恒为 null，schema 预留
+    tracks: list[VideoTrack | SubtitleTrack | AudioTrack] = []
+    render: None = None  # schema 预留
 
     @field_validator("version")
     @classmethod
     def check_version(cls, v: str) -> str:
-        if v != IR_VERSION:
-            raise ValueError(f"不支持的 IR 版本: {v}（当前支持 {IR_VERSION}）")
+        if v not in SUPPORTED_VERSIONS:
+            raise ValueError(f"不支持的 IR 版本: {v}（当前支持 {sorted(SUPPORTED_VERSIONS)}）")
         return v
 
 
@@ -128,6 +146,12 @@ def validate_ir(data: dict, *, check_paths: bool = True) -> EditingIR:
                     errors.append(
                         f"video#{track.index} 第 {i + 1} 个片段 trim.end ({clip.trim.end}) 超出素材时长 ({src.duration})"
                     )
+        elif track.type == "audio":
+            if len(track.items) > 1:
+                errors.append(f"audio#{track.index} 仅支持单条配乐（MVP 限制），当前 {len(track.items)} 条")
+            for m in track.items:
+                if m.source_id not in source_map:
+                    errors.append(f"audio#{track.index} 配乐引用了不存在的 source: {m.source_id}")
         elif track.type == "subtitle":
             items = sorted(track.items, key=lambda s: s.timeline_start)
             for a, b in zip(items, items[1:]):

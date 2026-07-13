@@ -94,8 +94,10 @@ async def test_plan_api_full_flow_with_fallback_execute(sample_video, analyzed_a
             if status != "generating":
                 break
         assert status == "draft", client.get(f"/api/plans/{plan_id}").json()
+        from app.ir.schema import IR_VERSION
+
         plan = client.get(f"/api/plans/{plan_id}").json()
-        assert plan["ir"]["version"] == "0.1"
+        assert plan["ir"]["version"] == IR_VERSION
 
         # 确认 + 执行（强制降级路径）
         assert client.post(f"/api/plans/{plan_id}/confirm").json()["status"] == "confirmed"

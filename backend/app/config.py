@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     dashscope_api_key: str | None = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_vl_model: str = "qwen-vl-max"
-    qwen_llm_model: str = "qwen-max"
+    qwen_llm_model: str = "qwen3.7-max"
 
     # --- 本地模型 ---
     whisper_model: str = "small"
@@ -29,12 +29,8 @@ class Settings(BaseSettings):
     data_dir: Path = REPO_DIR / "data"
 
     # --- DaVinci Resolve 脚本环境（macOS 默认值） ---
-    resolve_script_api: str = (
-        "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting"
-    )
-    resolve_script_lib: str = (
-        "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so"
-    )
+    resolve_script_api: str = "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting"
+    resolve_script_lib: str = "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so"
 
     @property
     def db_path(self) -> Path:

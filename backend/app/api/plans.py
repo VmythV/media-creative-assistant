@@ -1,16 +1,21 @@
-"""剪辑方案 API：精彩片段推荐、方案生成/查看/确认。"""
+"""剪辑方案 API：精彩片段推荐、方案生成/查看/确认/修订/配乐。"""
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.ir.schema import IRValidationError, validate_ir
 from app.runtime.events import bus
 from app.runtime.planning import diff_plans, generate_plan, revise_plan
 from app.store.db import db_session, get_db
 from app.store.models import AnalysisRecord, Asset, EditPlan
+from app.tools.media import probe_media
+
+MUSIC_SOURCE_ID = "src_music"
 
 logger = logging.getLogger("mca.plans")
 router = APIRouter(tags=["plans"])
@@ -153,6 +158,64 @@ async def revise(plan_id: int, req: ReviseRequest, db: Session = Depends(get_db)
 
     asyncio.create_task(run())
     return {"plan_id": new_id, "revised_from": plan_id, "status": "generating"}
+
+
+class MusicRequest(BaseModel):
+    path: str
+    gain_db: float = -16.0
+    fade_in: float = 1.0
+    fade_out: float = 2.0
+    loop: bool = True
+
+
+@router.put("/plans/{plan_id}/music")
+def set_music(plan_id: int, req: MusicRequest, db: Session = Depends(get_db)) -> dict:
+    """设置/替换方案配乐：确定性写入 IR 音频轨，不经过模型（设计文档 §11）。"""
+    plan = db.get(EditPlan, plan_id)
+    if plan is None:
+        raise HTTPException(404, "方案不存在")
+    if not plan.ir:
+        raise HTTPException(400, "方案没有 Editing IR")
+    file = Path(req.path).expanduser()
+    if not file.is_file():
+        raise HTTPException(400, f"文件不存在: {req.path}")
+    meta = probe_media(str(file))
+    if not meta.get("audio"):
+        raise HTTPException(400, "该文件不含音频流")
+
+    ir = dict(plan.ir)
+    ir["version"] = "0.2"
+    ir["sources"] = [s for s in ir["sources"] if s["id"] != MUSIC_SOURCE_ID] + [
+        {"id": MUSIC_SOURCE_ID, "path": str(file), "duration": meta["duration"]}
+    ]
+    ir["tracks"] = [t for t in ir["tracks"] if t.get("type") != "audio"] + [
+        {"type": "audio", "index": 1, "items": [{
+            "type": "music", "source_id": MUSIC_SOURCE_ID, "gain_db": req.gain_db,
+            "fade_in": req.fade_in, "fade_out": req.fade_out, "loop": req.loop,
+        }]}
+    ]
+    try:
+        validate_ir(ir)
+    except IRValidationError as e:
+        raise HTTPException(400, f"配乐后 IR 校验失败: {e}") from e
+    plan.ir = ir
+    db.commit()
+    return {"plan_id": plan_id, "music": file.name, "gain_db": req.gain_db}
+
+
+@router.delete("/plans/{plan_id}/music")
+def remove_music(plan_id: int, db: Session = Depends(get_db)) -> dict:
+    plan = db.get(EditPlan, plan_id)
+    if plan is None:
+        raise HTTPException(404, "方案不存在")
+    if not plan.ir:
+        raise HTTPException(400, "方案没有 Editing IR")
+    ir = dict(plan.ir)
+    ir["sources"] = [s for s in ir["sources"] if s["id"] != MUSIC_SOURCE_ID]
+    ir["tracks"] = [t for t in ir["tracks"] if t.get("type") != "audio"]
+    plan.ir = ir
+    db.commit()
+    return {"plan_id": plan_id, "music": None}
 
 
 @router.post("/plans/{plan_id}/confirm")

@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from app.ir.schema import EditingIR, SubtitleTrack, VideoTrack, timeline_duration
+from app.ir.schema import AudioTrack, EditingIR, SubtitleTrack, VideoTrack, timeline_duration
 
 Progress = Callable[[str, str], None]
 
@@ -138,7 +138,32 @@ def render_video(
           "-i", str(concat_list), "-c", "copy", str(merged)])
     emit("concat", f"{len(seg_paths)} 个片段合并完成")
 
-    # 3) 字幕烧录（overlay 按时间段叠加 PNG）
+    # 3) 配乐混音（视频流 copy，仅重编音频；设计文档 §11）
+    music = next(
+        (m for t in ir.tracks if isinstance(t, AudioTrack) for m in t.items), None
+    )
+    if music is not None:
+        total = timeline_duration(ir)
+        src = src_map[music.source_id]
+        mixed = seg_dir / "mixed.mp4"
+        fade_out_start = max(total - music.fade_out, 0)
+        bgm = (
+            f"[1:a]atrim=0:{total},volume={music.gain_db}dB,"
+            f"afade=t=in:st=0:d={music.fade_in},"
+            f"afade=t=out:st={fade_out_start}:d={music.fade_out}[bgm];"
+            f"[0:a][bgm]amix=inputs=2:duration=first:normalize=0[aout]"
+        )
+        cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(merged)]
+        if music.loop:
+            cmd += ["-stream_loop", "-1"]
+        cmd += ["-i", src.path, "-filter_complex", bgm,
+                "-map", "0:v", "-map", "[aout]", "-c:v", "copy",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", str(mixed)]
+        _run(cmd)
+        merged = mixed
+        emit("music", f"配乐混音完成（{Path(src.path).name}，{music.gain_db}dB）")
+
+    # 4) 字幕烧录（overlay 按时间段叠加 PNG）
     out_path = out_dir / (filename or f"{ir.project.name}.mp4")
     subtitles_burned = False
     overlays = _subtitle_pngs(ir, seg_dir) if burn_subtitles else []
@@ -166,4 +191,5 @@ def render_video(
         "duration": timeline_duration(ir),
         "subtitles_burned": subtitles_burned,
         "clips": len(clips),
+        "music": Path(src_map[music.source_id].path).name if music else None,
     }
