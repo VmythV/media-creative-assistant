@@ -40,6 +40,9 @@ export interface Plan {
     error?: string;
     execution?: ExecutionResult;
     render?: RenderResult;
+    revised_from?: number;
+    revision_instruction?: string;
+    diff?: PlanDiff;
   };
   ir: Record<string, unknown> | null;
   created_at: string;
@@ -58,6 +61,14 @@ export interface ExecutionResult {
   mode: string;
   resolve?: { project: string; timeline: string; clips: number; subtitles: Record<string, unknown> };
   artifacts: Record<string, string>;
+}
+
+export interface PlanDiff {
+  added: string[];
+  removed: string[];
+  changed: string[];
+  duration: string;
+  unchanged: number;
 }
 
 export interface RenderResult {
@@ -117,5 +128,9 @@ export const api = {
   executePlan: (id: number) =>
     request(`/api/plans/${id}/execute`, { method: "POST", body: JSON.stringify({}) }),
   renderPlan: (id: number) => request(`/api/plans/${id}/render`, { method: "POST" }),
+  revisePlan: (id: number, instruction: string) =>
+    request<{ plan_id: number }>(`/api/plans/${id}/revise`, {
+      method: "POST", body: JSON.stringify({ instruction }),
+    }),
   logs: () => request<{ logs: LogEntry[] }>("/api/logs"),
 };

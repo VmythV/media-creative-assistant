@@ -147,27 +147,17 @@ def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
     }
 
 
-async def generate_plan(goal: str, asset_ids: list[int] | None = None) -> dict:
-    """生成剪辑方案与 IR。返回 {"plan": ..., "ir": ...}；失败抛异常。"""
-    analyzed = _load_analyzed_assets(asset_ids)
-    if not analyzed:
-        raise ValueError("没有已完成分析的素材，请先导入并分析素材")
-
-    brief = _build_material_brief(analyzed)
+async def _plan_llm_loop(messages: list[dict], analyzed: list[dict], fallback_name: str) -> dict:
+    """LLM 产出受限方案格式 → IR 转换校验；失败带错误自动重试一次。"""
     llm = get_llm_provider()
-    messages = [
-        {"role": "system", "content": PLAN_SYSTEM_PROMPT},
-        {"role": "user", "content": f"创作目标：{goal}\n\n可用素材：\n{brief}"},
-    ]
-
     last_error = None
-    for attempt in range(2):  # 校验失败自动带错误重试一次
+    for attempt in range(2):
         resp = await llm.chat(messages, json_mode=True, temperature=0.5)
         try:
             plan = json.loads(resp["content"])
             if not plan.get("clips"):
                 raise IRValidationError(["方案不含任何片段"])
-            project_name = plan.get("title") or goal[:40]
+            project_name = plan.get("title") or fallback_name
             ir = plan_to_ir(plan, analyzed, project_name)
             validate_ir(ir, check_paths=True)
             return {"plan": plan, "ir": ir}
@@ -184,3 +174,94 @@ async def generate_plan(goal: str, asset_ids: list[int] | None = None) -> dict:
                 }
             )
     raise IRValidationError(last_error or ["方案生成失败"])
+
+
+async def generate_plan(goal: str, asset_ids: list[int] | None = None) -> dict:
+    """生成剪辑方案与 IR。返回 {"plan": ..., "ir": ...}；失败抛异常。"""
+    analyzed = _load_analyzed_assets(asset_ids)
+    if not analyzed:
+        raise ValueError("没有已完成分析的素材，请先导入并分析素材")
+
+    brief = _build_material_brief(analyzed)
+    messages = [
+        {"role": "system", "content": PLAN_SYSTEM_PROMPT},
+        {"role": "user", "content": f"创作目标：{goal}\n\n可用素材：\n{brief}"},
+    ]
+    return await _plan_llm_loop(messages, analyzed, fallback_name=goal[:40])
+
+
+REVISE_RULE = """
+现在的任务是**修订**一个已有方案：用户会给出当前方案 JSON 和修订指令。
+只按指令修改，指令未提及的片段、顺序、字幕保持原样；输出修订后的完整方案 JSON（同上格式）。"""
+
+
+async def revise_plan(base_plan: dict, instruction: str, asset_ids: list[int] | None = None) -> dict:
+    """按自然语言指令修订已有方案（设计文档 §10）。返回 {"plan": ..., "ir": ...}。"""
+    analyzed = _load_analyzed_assets(asset_ids)
+    if not analyzed:
+        raise ValueError("没有已完成分析的素材")
+
+    brief = _build_material_brief(analyzed)
+    messages = [
+        {"role": "system", "content": PLAN_SYSTEM_PROMPT + REVISE_RULE},
+        {
+            "role": "user",
+            "content": (
+                f"当前方案：\n{json.dumps(base_plan, ensure_ascii=False)}\n\n"
+                f"可用素材：\n{brief}\n\n修订指令：{instruction}"
+            ),
+        },
+    ]
+    fallback = base_plan.get("title") or "修订方案"
+    return await _plan_llm_loop(messages, analyzed, fallback_name=fallback)
+
+
+def _clip_desc(c: dict) -> str:
+    sub = f"，字幕「{c.get('subtitle')}」" if c.get("subtitle") else ""
+    return f"素材#{c['asset_id']} [{c['start']:.1f}s-{c['end']:.1f}s] {c.get('section', '')}{sub}"
+
+
+def diff_plans(old: dict, new: dict) -> dict:
+    """确定性方案差异：按 asset_id + 时间区间重叠匹配片段，产出人类可读差异。"""
+    old_clips = list(old.get("clips", []))
+    new_clips = list(new.get("clips", []))
+    matched_old: set[int] = set()
+    added, changed = [], []
+
+    for ni, nc in enumerate(new_clips):
+        best, best_overlap = None, 0.0
+        for oi, oc in enumerate(old_clips):
+            if oi in matched_old or oc["asset_id"] != nc["asset_id"]:
+                continue
+            overlap = min(oc["end"], nc["end"]) - max(oc["start"], nc["start"])
+            if overlap > best_overlap:
+                best, best_overlap = oi, overlap
+        if best is None:
+            added.append(f"第 {ni + 1} 位新增：{_clip_desc(nc)}")
+            continue
+        matched_old.add(best)
+        oc = old_clips[best]
+        details = []
+        if (round(oc["start"], 1), round(oc["end"], 1)) != (round(nc["start"], 1), round(nc["end"], 1)):
+            details.append(f"区间 {oc['start']:.1f}-{oc['end']:.1f}s → {nc['start']:.1f}-{nc['end']:.1f}s")
+        if oc.get("section") != nc.get("section"):
+            details.append(f"角色 {oc.get('section')} → {nc.get('section')}")
+        if (oc.get("subtitle") or None) != (nc.get("subtitle") or None):
+            details.append(f"字幕「{oc.get('subtitle') or '无'}」→「{nc.get('subtitle') or '无'}」")
+        if best != ni:
+            details.append(f"位置 {best + 1} → {ni + 1}")
+        if details:
+            changed.append(f"素材#{nc['asset_id']}：" + "；".join(details))
+
+    removed = [
+        f"删除：{_clip_desc(oc)}" for oi, oc in enumerate(old_clips) if oi not in matched_old
+    ]
+    old_dur = sum(c["end"] - c["start"] for c in old_clips)
+    new_dur = sum(c["end"] - c["start"] for c in new_clips)
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "duration": f"{old_dur:.1f}s → {new_dur:.1f}s",
+        "unchanged": len(matched_old) - len(changed),
+    }

@@ -42,6 +42,61 @@ function ClipList({ clips, assets }: { clips: PlanClip[]; assets: Asset[] }) {
   );
 }
 
+function DiffCard({ plan }: { plan: Plan }) {
+  const diff = plan.plan.diff;
+  if (!diff) return null;
+  const lines = [
+    ...diff.added.map((s) => ({ color: "green", text: s })),
+    ...diff.removed.map((s) => ({ color: "red", text: s })),
+    ...diff.changed.map((s) => ({ color: "orange", text: `修改：${s}` })),
+  ];
+  return (
+    <Card size="small" title={`与方案 #${plan.plan.revised_from} 的差异（总时长 ${diff.duration}）`}>
+      {lines.length === 0 ? (
+        <Typography.Text type="secondary">没有片段级变化</Typography.Text>
+      ) : (
+        <Space direction="vertical" size={2}>
+          {lines.map((l, i) => (
+            <Typography.Text key={i}>
+              <Tag color={l.color} /> {l.text}
+            </Typography.Text>
+          ))}
+        </Space>
+      )}
+    </Card>
+  );
+}
+
+function ReviseBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
+  const [instruction, setInstruction] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!instruction.trim()) return;
+    setBusy(true);
+    try {
+      await api.revisePlan(plan.id, instruction.trim());
+      message.success("修订方案生成中，将作为新方案出现");
+      setInstruction("");
+      refresh();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Space.Compact style={{ width: "100%" }}>
+      <Input
+        placeholder='用自然语言修订，例如："总长压到25秒，去掉第2段，结尾字幕改成……"'
+        value={instruction}
+        onChange={(e) => setInstruction(e.target.value)}
+        onPressEnter={submit}
+      />
+      <Button onClick={submit} loading={busy}>修订方案</Button>
+    </Space.Compact>
+  );
+}
+
 function RenderCard({ plan }: { plan: Plan }) {
   const render = plan.plan.render;
   if (!render) return null;
@@ -145,7 +200,12 @@ export function PlanPanel({
               <Space>
                 <Tag color={PLAN_STATUS[p.status]?.color}>{PLAN_STATUS[p.status]?.text ?? p.status}</Tag>
                 <Typography.Text strong>{p.plan.title ?? p.goal}</Typography.Text>
-                <Typography.Text type="secondary">目标：{p.goal}</Typography.Text>
+                {p.plan.revised_from != null && (
+                  <Tag color="purple">修订自 #{p.plan.revised_from}</Tag>
+                )}
+                <Typography.Text type="secondary">
+                  {p.plan.revision_instruction ? `修订：${p.plan.revision_instruction}` : `目标：${p.goal}`}
+                </Typography.Text>
               </Space>
             ),
             children: (
@@ -173,10 +233,10 @@ export function PlanPanel({
                       </Button>
                     </>
                   )}
-                  {p.status === "confirmed" && (
+                  {["confirmed", "executed"].includes(p.status) && (
                     <Button type="primary"
                       onClick={() => api.executePlan(p.id).then(refresh).catch((e) => message.error(String(e)))}>
-                      执行（生成 Resolve 时间线）
+                      {p.status === "executed" ? "重新执行（Resolve 时间线）" : "执行（生成 Resolve 时间线）"}
                     </Button>
                   )}
                   {["confirmed", "executed"].includes(p.status) && (
@@ -189,6 +249,10 @@ export function PlanPanel({
                     </Button>
                   )}
                 </Space>
+                {["draft", "confirmed", "executed"].includes(p.status) && (
+                  <ReviseBox plan={p} refresh={refresh} />
+                )}
+                <DiffCard plan={p} />
                 <RenderCard plan={p} />
                 <ExecutionCard plan={p} />
               </Space>

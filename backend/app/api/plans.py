@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.runtime.events import bus
-from app.runtime.planning import generate_plan
+from app.runtime.planning import diff_plans, generate_plan, revise_plan
 from app.store.db import db_session, get_db
 from app.store.models import AnalysisRecord, Asset, EditPlan
 
@@ -95,6 +95,64 @@ def get_plan(plan_id: int, db: Session = Depends(get_db)) -> dict:
     if plan is None:
         raise HTTPException(404, "方案不存在")
     return _plan_dict(plan)
+
+
+class ReviseRequest(BaseModel):
+    instruction: str
+    asset_ids: list[int] | None = None
+
+
+@router.post("/plans/{plan_id}/revise")
+async def revise(plan_id: int, req: ReviseRequest, db: Session = Depends(get_db)) -> dict:
+    """自然语言修订：产出新方案行，旧方案保留可回滚（设计文档 §10）。"""
+    if not req.instruction.strip():
+        raise HTTPException(400, "修订指令不能为空")
+    base = db.get(EditPlan, plan_id)
+    if base is None:
+        raise HTTPException(404, "方案不存在")
+    if not base.ir or not base.plan.get("clips"):
+        raise HTTPException(400, "源方案没有可修订的内容")
+    base_plan, base_goal = dict(base.plan), base.goal
+    base_plan.pop("execution", None)  # 执行/渲染结果不属于方案内容
+    base_plan.pop("render", None)
+
+    new_row = EditPlan(
+        goal=base_goal,
+        plan={"revised_from": plan_id, "revision_instruction": req.instruction},
+        status="generating",
+    )
+    db.add(new_row)
+    db.commit()
+    new_id = new_row.id
+
+    async def run():
+        bus.publish("plan", {"plan_id": new_id, "step": "generating", "detail": f"修订：{req.instruction}"})
+        try:
+            result = await revise_plan(base_plan, req.instruction, req.asset_ids)
+            diff = diff_plans(base_plan, result["plan"])
+            with db_session() as s:
+                row = s.get(EditPlan, new_id)
+                row.plan = {
+                    **result["plan"],
+                    "revised_from": plan_id,
+                    "revision_instruction": req.instruction,
+                    "diff": diff,
+                }
+                row.ir = result["ir"]
+                row.status = "draft"
+                s.commit()
+            bus.publish("plan", {"plan_id": new_id, "step": "draft", "detail": "修订方案生成完成"})
+        except Exception as e:  # noqa: BLE001 - 失败落状态并上报
+            logger.exception("方案 %s 修订失败", plan_id)
+            with db_session() as s:
+                row = s.get(EditPlan, new_id)
+                row.status = "failed"
+                row.plan = {**row.plan, "error": str(e)}
+                s.commit()
+            bus.publish("plan", {"plan_id": new_id, "step": "failed", "detail": str(e)[:300]})
+
+    asyncio.create_task(run())
+    return {"plan_id": new_id, "revised_from": plan_id, "status": "generating"}
 
 
 @router.post("/plans/{plan_id}/confirm")

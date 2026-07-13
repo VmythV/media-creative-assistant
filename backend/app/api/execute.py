@@ -58,7 +58,8 @@ async def execute_plan(plan_id: int, req: ExecuteRequest | None = None, db: Sess
     plan = db.get(EditPlan, plan_id)
     if plan is None:
         raise HTTPException(404, "方案不存在")
-    if plan.status not in ("draft", "confirmed"):
+    # executed 允许重执行：Resolve 项目名带时间戳，重复执行无副作用（支持回滚旧版）
+    if plan.status not in ("draft", "confirmed", "executed"):
         raise HTTPException(400, f"当前状态不可执行: {plan.status}")
     if not plan.ir:
         raise HTTPException(400, "方案没有 Editing IR")

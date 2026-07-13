@@ -78,3 +78,12 @@
 - [x] `POST /api/plans/{plan_id}/render` 接口（异步 + SSE + 产物写回）
 - [x] 前端：方案页渲染成片入口；素材导入说明含图片
 - [x] M6 验证：pytest 5 项通过（27 passed 全量回归）；真实照片 API 导入自动转片段；真实方案渲染出 32s 成片（字幕烧录）且 render_video 入执行日志
+
+## M7 自然语言修订方案（设计文档 §10）
+
+- [x] `revise_plan`：当前方案 + 修订指令 → 新方案（复用受限格式与校验重试循环）
+- [x] `diff_plans`：确定性方案差异（新增/删除/修改/顺序）
+- [x] `POST /api/plans/{plan_id}/revise`（新方案行，revised_from/diff 落库）
+- [x] 执行接口允许 executed 状态重执行（回滚支持）
+- [x] 前端：方案卡修订输入框 + 差异展示 + 修订来源标记
+- [x] M7 验证：pytest 4 项通过（31 passed 全量）；真实指令"压缩到20秒、铺垫只留风铃、结尾只留夕阳"修订准确（diff：删 3 段、32s→20s），修订版渲染出 20s 成片
