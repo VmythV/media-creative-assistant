@@ -13,11 +13,12 @@ from app.runtime.pipeline import ANALYSIS_VERSION, analyze_asset
 from app.store.db import get_db
 from app.store.hashing import content_hash
 from app.store.models import AnalysisRecord, Asset
-from app.tools.media import probe_media
+from app.tools.media import image_to_clip, probe_media
 
 router = APIRouter(tags=["assets"])
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".mts", ".mxf"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic"}
 
 
 class ImportRequest(BaseModel):
@@ -46,19 +47,35 @@ def _asset_dict(a: Asset) -> dict:
 @router.post("/assets/import")
 def import_assets(req: ImportRequest, db: Session = Depends(get_db)) -> dict:
     files: list[Path] = []
+    images: list[Path] = []
+
+    def collect(path: Path) -> None:
+        suffix = path.suffix.lower()
+        if suffix in VIDEO_EXTS:
+            files.append(path)
+        elif suffix in IMAGE_EXTS:
+            images.append(path)
+
     for p in req.paths:
         path = Path(p).expanduser()
-        if path.is_file() and path.suffix.lower() in VIDEO_EXTS:
-            files.append(path)
+        if path.is_file():
+            collect(path)
     if req.directory:
         d = Path(req.directory).expanduser()
         if not d.is_dir():
             raise HTTPException(400, f"目录不存在: {req.directory}")
-        files.extend(f for f in sorted(d.iterdir()) if f.suffix.lower() in VIDEO_EXTS and f.is_file())
-    if not files:
-        raise HTTPException(400, "未找到可导入的视频文件")
+        for f in sorted(d.iterdir()):
+            if f.is_file():
+                collect(f)
+    if not files and not images:
+        raise HTTPException(400, "未找到可导入的视频或图片文件")
 
     imported, errors = [], []
+    for img in images:  # 图片先转视频片段（设计文档 §9.1），失败不阻断其他文件
+        try:
+            files.append(Path(image_to_clip(str(img))["clip_path"]))
+        except Exception as e:  # noqa: BLE001
+            errors.append({"path": str(img), "error": f"图片转片段失败: {e}"})
     for f in files:
         try:
             existing = db.query(Asset).filter_by(path=str(f)).first()

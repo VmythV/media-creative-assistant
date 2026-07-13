@@ -163,3 +163,86 @@ def detect_audio_events(wav_path: str) -> dict:
         elif "max_volume:" in line:
             max_volume = float(line.rsplit("max_volume:", 1)[1].replace("dB", "").strip())
     return {"silences": silences, "mean_volume_db": mean_volume, "max_volume_db": max_volume}
+
+
+IMAGE_CLIP_DURATION = 4.0
+IMAGE_CLIP_FPS = 25
+IMAGE_CLIP_SIZE = (1920, 1080)
+
+
+@registry.register(
+    name="image_to_clip",
+    description="把照片转成带 Ken Burns 缓慢推近的视频片段（默认 4 秒 1080p），供分析管线与剪辑使用。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "图片文件绝对路径（jpg/png/webp/heic）"},
+            "duration": {"type": "number", "description": "片段时长（秒），默认 4"},
+        },
+        "required": ["path"],
+    },
+)
+def image_to_clip(path: str, duration: float = IMAGE_CLIP_DURATION) -> dict:
+    file = Path(path)
+    if not file.is_file():
+        raise FileNotFoundError(f"文件不存在: {path}")
+
+    from app.config import settings
+    from app.store.hashing import content_hash
+
+    out_dir = settings.data_dir / "image_clips"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{file.stem}_{content_hash(file)[:8]}.mp4"
+    if out.exists():  # 同一图片幂等复用
+        return {"clip_path": str(out), "duration": duration, "cached": True}
+
+    from PIL import Image, ImageOps
+
+    try:  # HEIC 支持（可选依赖）
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pass
+
+    # EXIF 方向烘焙进像素（ffmpeg 各版本 EXIF 自动旋转行为不一，不依赖它）
+    import tempfile
+
+    with Image.open(file) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        width, height = img.size
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            baked = Path(tmp.name)
+        img.save(baked, quality=92)
+
+    try:
+        w, h = IMAGE_CLIP_SIZE
+        frames = round(duration * IMAGE_CLIP_FPS)
+        zoom = (
+            f"zoompan=z='1+0.06*on/{frames}':x='iw/2-iw/(2*zoom)':y='ih/2-ih/(2*zoom)'"
+            f":d={frames}:s={w}x{h}:fps={IMAGE_CLIP_FPS}"
+        )
+        common = ["-frames:v", str(frames), "-c:v", "libx264", "-preset", "medium",
+                  "-crf", "18", "-pix_fmt", "yuv420p", str(out)]
+        if width >= height:
+            # 横构图：放大填满 16:9 后中心裁切
+            vf = f"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},{zoom}"
+            proc = _run(["ffmpeg", "-y", "-v", "error", "-i", str(baked), "-vf", vf, *common])
+        else:
+            # 竖构图：模糊放大背景 + 原图等高居中
+            fc = (
+                f"[0:v]split[bg][fg];"
+                f"[bg]scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,"
+                f"crop={w * 2}:{h * 2},gblur=sigma=40,eq=brightness=-0.08[b];"
+                f"[fg]scale=-2:{h * 2}[f];"
+                f"[b][f]overlay=(W-w)/2:(H-h)/2,{zoom}"
+            )
+            proc = _run(["ffmpeg", "-y", "-v", "error", "-i", str(baked), "-filter_complex", fc, *common])
+        if proc.returncode != 0:
+            raise RuntimeError(f"图片转片段失败: {proc.stderr.strip()[:300]}")
+    finally:
+        baked.unlink(missing_ok=True)
+
+    return {"clip_path": str(out), "duration": duration, "cached": False}

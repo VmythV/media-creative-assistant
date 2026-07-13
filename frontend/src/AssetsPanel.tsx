@@ -56,7 +56,7 @@ export function AssetsPanel({ assets, refresh }: { assets: Asset[]; refresh: () 
     <Space direction="vertical" style={{ width: "100%" }} size="large">
       <Space.Compact style={{ width: "100%" }}>
         <Input
-          placeholder="输入视频文件或目录的绝对路径，例如 /Users/me/Movies/素材目录"
+          placeholder="输入视频/照片文件或目录的绝对路径（照片会自动转成推近片段），例如 /Users/me/Movies/素材目录"
           value={importPath}
           onChange={(e) => setImportPath(e.target.value)}
           onPressEnter={doImport}

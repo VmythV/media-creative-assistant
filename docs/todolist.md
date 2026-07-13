@@ -66,6 +66,15 @@
 
 ## M5 验收
 
-- [ ] 按设计文档 2.1 验收标准逐条验证（**待用户提供 DASHSCOPE_API_KEY 与真实素材后进行**）
-- [ ] 修复验收中发现的问题
+- [x] 按设计文档 2.1 验收标准逐条验证 — 2026-07-13 以真实素材（10 张照片转片段）+ 真实模型完成：①导入分析分类 ②推荐附理由 ③中文转写（faster-whisper small，合成语音视频验证）+ SRT ④方案有叙事结构且 IR 校验通过 ⑤Resolve Studio 一键生成项目/时间线/8 片段/SRT 入媒体池 ⑥降级四件套（IR/清单/FCPXML/SRT） ⑦二次分析命中缓存 ⑧工具调用见 /api/logs
+- [x] 修复验收中发现的问题 — 无阻塞问题；发现系统 ffmpeg 为精简编译（无 libass/drawtext），成片渲染需用 PNG overlay 方案（见第二阶段 render_video）
 - [x] 更新 README 与使用说明
+
+## M6 照片素材与成片渲染（设计文档 §9）
+
+- [x] `image_to_clip` 工具（EXIF 烘焙 + Ken Burns；横裁切/竖模糊背景）
+- [x] 导入 API 支持图片扩展名，转换后注册为素材进入分析管线
+- [x] `render_video` 渲染模块（IR trim/concat + Pillow 字幕 PNG overlay）
+- [x] `POST /api/plans/{plan_id}/render` 接口（异步 + SSE + 产物写回）
+- [x] 前端：方案页渲染成片入口；素材导入说明含图片
+- [x] M6 验证：pytest 5 项通过（27 passed 全量回归）；真实照片 API 导入自动转片段；真实方案渲染出 32s 成片（字幕烧录）且 render_video 入执行日志

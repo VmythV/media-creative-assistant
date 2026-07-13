@@ -15,6 +15,7 @@ from app.ir.schema import validate_ir
 from app.runtime.events import bus
 from app.store.db import db_session, get_db
 from app.store.models import EditPlan, TaskLog
+from app.tools.registry import registry
 
 logger = logging.getLogger("mca.execute")
 router = APIRouter(tags=["execute"])
@@ -98,6 +99,47 @@ async def execute_plan(plan_id: int, req: ExecuteRequest | None = None, db: Sess
 
     asyncio.create_task(run())
     return {"plan_id": plan_id, "status": "executing"}
+
+
+@router.post("/plans/{plan_id}/render")
+async def render_plan(plan_id: int, db: Session = Depends(get_db)) -> dict:
+    """确认/已执行的方案 → mp4 成片（设计文档 §9.2）。"""
+    plan = db.get(EditPlan, plan_id)
+    if plan is None:
+        raise HTTPException(404, "方案不存在")
+    if plan.status not in ("confirmed", "executed"):
+        raise HTTPException(400, f"当前状态不可渲染: {plan.status}")
+    if not plan.ir:
+        raise HTTPException(400, "方案没有 Editing IR")
+    ir_dict = dict(plan.ir)
+
+    def emit(step: str, detail: str = "") -> None:
+        bus.publish("render", {"plan_id": plan_id, "step": step, "detail": detail})
+
+    async def run():
+        emit("start")
+        try:
+            out_dir = settings.data_dir / "output" / f"plan_{plan_id}"
+            result = await registry.execute(
+                "render_video", {"ir": ir_dict, "output_dir": str(out_dir)}
+            )
+            if result.error:
+                raise RuntimeError(result.error)
+            with db_session() as s:
+                row = s.get(EditPlan, plan_id)
+                row.plan = {**row.plan, "render": result.output}
+                s.commit()
+            emit("done", result.output["video"])
+        except Exception as e:  # noqa: BLE001 - 失败上报 SSE，不改方案状态
+            logger.exception("方案 %s 渲染失败", plan_id)
+            with db_session() as s:
+                row = s.get(EditPlan, plan_id)
+                row.plan = {**row.plan, "render": {"error": str(e)[:300]}}
+                s.commit()
+            emit("failed", str(e)[:300])
+
+    asyncio.create_task(run())
+    return {"plan_id": plan_id, "status": "rendering"}
 
 
 def _finish(plan_id: int, status: str, result: dict | None = None) -> None:

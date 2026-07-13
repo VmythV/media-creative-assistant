@@ -42,7 +42,7 @@ MVP 完成时，系统必须端到端支持以下用户旅程：
 
 ### 2.2 明确不做（MVP 边界）
 
-- 不做成片渲染输出（FFmpeg 渲染成片放第二阶段）。
+- ~~不做成片渲染输出（FFmpeg 渲染成片放第二阶段）~~（2026-07-13 M5 验收后提前纳入：真实使用中用户需要直接拿到 mp4 成片，见 §9 M6）。
 - 不做自然语言修改已生成的 Timeline（IR diff/回滚放第二阶段）。
 - 不做 BGM 推荐、特效模板、风格学习、多软件 Adapter、协作。
 - 不做账号体系；Memory 只实现 Project Memory + Temporary Memory，User Memory 仅留接口。
@@ -243,3 +243,26 @@ media-creative-assistant/
 | M5 验收 | 按 2.1 逐条验收、修 bug、补文档 | 2.1 全部通过 |
 
 每个里程碑合入 main 前跑通该里程碑的验证方式；M2 起 IR schema 的任何变更必须同步更新本文档第 5 节。
+
+---
+
+## 9. M6：照片素材与成片渲染（M5 验收后新增）
+
+M5 真实验收（用户以 10 张照片剪旅行短片）暴露两个缺口，提前纳入开发：
+
+### 9.1 照片素材导入（image_to_clip）
+
+- 导入 API 扩展图片扩展名（jpg/jpeg/png/heic）；图片经 `image_to_clip` 工具转成视频片段后按现有流程注册为素材，复用全部分析管线（视觉分析对静态片段天然有效；无音频自动跳过音频步骤）。
+- 转换规则：默认 4 秒 / 25fps / 1080p，Ken Burns 缓慢推近（zoompan）；EXIF 方向先烘焙进像素；横构图放大填满 16:9 后中心裁切，竖构图模糊放大背景 + 原图等高居中。
+- 产物路径：`data/image_clips/<原文件名>_<内容hash前8位>.mp4`（防不同目录同名冲突）；已存在则直接复用（幂等）。
+
+### 9.2 成片渲染（render_video）
+
+- 新增渲染模块：按 IR 顺序对各片段 trim → 统一到 project 分辨率/fps → concat → 可选字幕烧录，输出 `data/output/plan_<id>/<项目名>.mp4`。
+- 字幕烧录不依赖 libass/drawtext（实测 Homebrew ffmpeg 为精简编译均无）：用 Pillow 把每条字幕渲染成透明 PNG，按时间段 `overlay`。Pillow 为后端新增依赖。
+- API：`POST /api/plans/{plan_id}/render`（要求方案已 executed 或 confirmed），异步执行，产物路径写回 plan.execution.artifacts 并经 SSE 推送。
+- Resolve 可用与否均可渲染（渲染只依赖 IR 与源文件）；与 Resolve 时间线互为补充而非替代。
+
+| 里程碑 | 内容 | 验证方式 |
+| --- | --- | --- |
+| M6 照片与渲染 | `image_to_clip` 工具 + 导入 API 图片支持；`render_video` 模块 + 渲染 API | pytest：图片导入→分析全流程、IR 渲染出 mp4 时长正确；真实照片走通照片→方案→成片 |

@@ -39,6 +39,7 @@ export interface Plan {
     clips?: PlanClip[];
     error?: string;
     execution?: ExecutionResult;
+    render?: RenderResult;
   };
   ir: Record<string, unknown> | null;
   created_at: string;
@@ -57,6 +58,14 @@ export interface ExecutionResult {
   mode: string;
   resolve?: { project: string; timeline: string; clips: number; subtitles: Record<string, unknown> };
   artifacts: Record<string, string>;
+}
+
+export interface RenderResult {
+  video?: string;
+  duration?: number;
+  subtitles_burned?: boolean;
+  clips?: number;
+  error?: string;
 }
 
 export interface LogEntry {
@@ -107,5 +116,6 @@ export const api = {
   confirmPlan: (id: number) => request<Plan>(`/api/plans/${id}/confirm`, { method: "POST" }),
   executePlan: (id: number) =>
     request(`/api/plans/${id}/execute`, { method: "POST", body: JSON.stringify({}) }),
+  renderPlan: (id: number) => request(`/api/plans/${id}/render`, { method: "POST" }),
   logs: () => request<{ logs: LogEntry[] }>("/api/logs"),
 };

@@ -34,6 +34,29 @@ def export_fcpxml_tool(ir: dict) -> dict:
 
 
 @registry.register(
+    name="render_video",
+    description="将 Editing IR 渲染为 mp4 成片（trim/拼接 + 字幕烧录），输出到指定目录。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "ir": {"type": "object", "description": "Editing IR JSON"},
+            "output_dir": {"type": "string", "description": "成片输出目录绝对路径"},
+        },
+        "required": ["ir", "output_dir"],
+    },
+)
+async def render_video_tool(ir: dict, output_dir: str) -> dict:
+    import asyncio
+    from pathlib import Path
+
+    from app.ir.renderer import render_video
+
+    parsed = validate_ir(ir)  # 渲染依赖源文件，必须校验路径存在
+    # 渲染耗时长（多次 ffmpeg 编码），放线程池避免阻塞事件循环
+    return await asyncio.to_thread(render_video, parsed, Path(output_dir))
+
+
+@registry.register(
     name="export_edit_list",
     description="将 Editing IR 导出为人类可读的 Markdown 剪辑清单（降级路径）。",
     parameters=_IR_PARAM,

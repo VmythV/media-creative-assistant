@@ -42,6 +42,27 @@ function ClipList({ clips, assets }: { clips: PlanClip[]; assets: Asset[] }) {
   );
 }
 
+function RenderCard({ plan }: { plan: Plan }) {
+  const render = plan.plan.render;
+  if (!render) return null;
+  if (render.error) {
+    return <Alert type="error" showIcon message="成片渲染失败" description={render.error} />;
+  }
+  return (
+    <Card size="small" title="成片">
+      <Descriptions column={1} size="small">
+        <Descriptions.Item label="视频文件">
+          <Typography.Text code copyable>{render.video}</Typography.Text>
+        </Descriptions.Item>
+        <Descriptions.Item label="信息">
+          {render.duration?.toFixed(1)} 秒 · {render.clips} 个片段
+          {render.subtitles_burned ? " · 已烧录字幕" : ""}
+        </Descriptions.Item>
+      </Descriptions>
+    </Card>
+  );
+}
+
 function ExecutionCard({ plan }: { plan: Plan }) {
   const exec = plan.plan.execution;
   if (!exec) return null;
@@ -158,7 +179,17 @@ export function PlanPanel({
                       执行（生成 Resolve 时间线）
                     </Button>
                   )}
+                  {["confirmed", "executed"].includes(p.status) && (
+                    <Button
+                      onClick={() =>
+                        api.renderPlan(p.id)
+                          .then(() => { message.success("渲染已开始，完成后自动刷新"); refresh(); })
+                          .catch((e) => message.error(String(e)))}>
+                      渲染成片（mp4）
+                    </Button>
+                  )}
                 </Space>
+                <RenderCard plan={p} />
                 <ExecutionCard plan={p} />
               </Space>
             ),
