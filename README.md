@@ -20,7 +20,7 @@ cp .env.example .env   # 编辑 .env 填入 DASHSCOPE_API_KEY
 # 2. 启动后端（自动托管已构建的前端）
 cd backend
 uv sync
-PYTHONPYCACHEPREFIX="$HOME/.cache/mca-pycache" uv run uvicorn app.main:app --port 8000
+uv run uvicorn app.main:app --port 8000
 
 # 3. 浏览器打开 http://127.0.0.1:8000
 ```
@@ -36,12 +36,7 @@ npm run build                              # 构建后由 FastAPI 托管
 cd backend && uv run python scripts/resolve_smoke_test.py  # Resolve 连接冒烟测试
 ```
 
-## ⚠️ iCloud 注意事项
+## 备注
 
-本项目当前位于 iCloud 同步目录内。iCloud 的"优化 Mac 存储"会把文件驱逐成占位符，导致 Python 导入/读取**无限阻塞**（已实际发生过）。已做的防护：
-
-- `backend/.venv` → `.venv.nosync`（符号链接，iCloud 不同步 `.nosync` 目录）
-- `frontend/node_modules` → `node_modules.nosync`（同上）
-- 运行时设置 `PYTHONPYCACHEPREFIX`，`.pyc` 不落在仓库内
-
-**强烈建议**：把项目迁出 iCloud 同步范围（如 `~/dev/`），或对本机关闭"优化 Mac 存储"。git 裸仓库备份在 `~/mca-backup.git`（`git push backup main` 可随时同步）。
+- 项目已迁出 iCloud 同步范围（现位于 `~/program/`），早期的 `.nosync` 符号链接与 `PYTHONPYCACHEPREFIX` 变通方案均已移除，正常使用 `.venv` / `node_modules` 即可。**不要**把本项目放回 iCloud 同步目录（"优化 Mac 存储"会把文件驱逐成占位符，导致 Python 导入无限阻塞，曾实际发生）。
+- 远程仓库：GitHub `origin`（https://github.com/VmythV/media-creative-assistant）；本地裸仓库备份在 `~/mca-backup.git`（`git push backup main`）。
