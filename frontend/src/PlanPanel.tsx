@@ -197,6 +197,41 @@ function OutputBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
   );
 }
 
+function SubtitleStyleBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
+  const tracks = (plan.ir as {
+    tracks?: { type: string; items?: unknown[]; style?: { preset?: string; position?: string } | null }[];
+  } | null)?.tracks ?? [];
+  const subTrack = tracks.find((t) => t.type === "subtitle" && (t.items?.length ?? 0) > 0);
+  if (!subTrack) return null;
+  const preset = subTrack.style?.preset ?? "default";
+  const position = subTrack.style?.position ?? "bottom";
+  const apply = (body: { preset?: string; position?: string }) =>
+    api.setSubtitleStyle(plan.id, { preset, position, ...body })
+      .then(() => { message.success("字幕样式已更新（重新渲染生效；Resolve 内请手动调样式）"); refresh(); })
+      .catch((e) => message.error(String(e)));
+  return (
+    <Space wrap>
+      <Typography.Text type="secondary">字幕样式：</Typography.Text>
+      <Segmented
+        size="small" value={preset}
+        options={[
+          { label: "默认", value: "default" }, { label: "文艺", value: "elegant" },
+          { label: "醒目", value: "bold" }, { label: "简约", value: "minimal" },
+        ]}
+        onChange={(v) => apply({ preset: String(v) })}
+      />
+      <Segmented
+        size="small" value={position}
+        options={[
+          { label: "底部", value: "bottom" }, { label: "顶部", value: "top" },
+          { label: "居中", value: "center" },
+        ]}
+        onChange={(v) => apply({ position: String(v) })}
+      />
+    </Space>
+  );
+}
+
 function RenderCard({ plan }: { plan: Plan }) {
   const render = plan.plan.render;
   if (!render) return null;
@@ -379,6 +414,7 @@ export function PlanPanel({
                     <ReviseBox plan={p} refresh={refresh} />
                     <MusicBox plan={p} refresh={refresh} />
                     <OutputBox plan={p} refresh={refresh} />
+                    <SubtitleStyleBox plan={p} refresh={refresh} />
                   </>
                 )}
                 <DiffCard plan={p} />

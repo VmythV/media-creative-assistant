@@ -179,6 +179,12 @@ export const api = {
     request<{ music: string; reason: string }>(`/api/plans/${id}/music/recommend`, {
       method: "POST", body: JSON.stringify({ mood }),
     }),
+  setSubtitleStyle: (id: number, body: { preset?: string; position?: string }) =>
+    request<{ style: Record<string, unknown> }>(`/api/plans/${id}/subtitle-style`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+  resetSubtitleStyle: (id: number) =>
+    request(`/api/plans/${id}/subtitle-style`, { method: "DELETE" }),
   setOutput: (id: number, aspect: string, fill = "blur") =>
     request<{ render: { width: number; height: number; fill: string } }>(
       `/api/plans/${id}/output`,

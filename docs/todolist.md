@@ -155,3 +155,13 @@
 - [x] 对话：set_music 的 mood 参数走推荐（结果带理由）
 - [x] 前端：配乐框升级（曲库 AutoComplete + AI 推荐按钮 + 手动路径兜底 + 理由展示）
 - [x] M14 验证：pytest 3 项通过（61 passed 全量）；真实对话"换首更安静的音乐"→ 从 3 首曲库精准选中宁静古筝（理由引用了用户偏好记忆）并自动重渲
+
+## M15 字幕样式（phase2-roadmap §4）
+
+- [x] IR v0.5：SubtitleTrack.style（预设/位置/字号比/颜色/描边/底条/字体族，颜色校验）
+- [x] 渲染器：按 style 绘制（top/center/bottom 定位、半透明底条、hex 颜色、宋体/黑体切换）+ 窄画幅长字幕自动缩字
+- [x] 预设表确定性维护（default/elegant/bold/minimal → 具体字段展开）
+- [x] API：PUT/DELETE /plans/{id}/subtitle-style；对话 set_subtitle_style 意图（边界清单移除字幕样式）
+- [x] Resolve：样式仅体现渲染成片（执行摘要标注）
+- [x] 前端：方案卡样式预设/位置 Segmented 选择
+- [x] M15 验证：pytest 3 项通过（64 passed 全量）；真实对话"字幕放到顶部换醒目黄色重新渲染"→ bold+top 应用并重渲，抽帧确认顶部黄字底条且自动缩字不溢出

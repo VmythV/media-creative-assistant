@@ -11,8 +11,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-IR_VERSION = "0.4"
-SUPPORTED_VERSIONS = {"0.1", "0.2", "0.3", "0.4"}  # 0.1：无音频轨；0.2：无转场；0.3：无交付规格
+IR_VERSION = "0.5"
+# 0.1：无音频轨；0.2：无转场；0.3：无交付规格；0.4：无字幕样式
+SUPPORTED_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5"}
 
 ClipRole = Literal["opening", "build", "climax", "ending", "broll"]
 
@@ -105,10 +106,32 @@ class AudioTrack(BaseModel):
     items: list[MusicClip] = []
 
 
+class SubtitleStyle(BaseModel):
+    """字幕样式（v0.5）：预设名仅作展示，渲染只读具体字段；缺省即历史行为。"""
+
+    preset: str = "default"
+    position: Literal["bottom", "top", "center"] = "bottom"
+    size_ratio: float = Field(default=0.05, gt=0.01, le=0.15)  # 字号 / 画面高
+    color: str = Field(default="#FFFFFF", pattern=r"^#[0-9A-Fa-f]{6}$")
+    outline: bool = True     # 描边 + 投影
+    background: bool = False  # 半透明底条
+    font: Literal["sans", "serif"] = "sans"
+
+
+# 预设 → 具体字段（确定性展开，API/对话写入时使用）
+SUBTITLE_PRESETS: dict[str, dict] = {
+    "default": {},
+    "elegant": {"font": "serif", "size_ratio": 0.045, "color": "#FFF8E7"},
+    "bold": {"size_ratio": 0.065, "color": "#FFD400", "background": True},
+    "minimal": {"size_ratio": 0.04, "outline": False, "background": True},
+}
+
+
 class SubtitleTrack(BaseModel):
     type: Literal["subtitle"] = "subtitle"
     index: int = Field(ge=1)
     items: list[Subtitle] = []
+    style: SubtitleStyle | None = None  # v0.5：None 即默认样式
 
 
 class RenderSpec(BaseModel):

@@ -12,15 +12,22 @@ from app.ir.schema import AudioTrack, EditingIR, SubtitleTrack, VideoTrack, time
 
 Progress = Callable[[str, str], None]
 
-# 中文可用字体候选（macOS 优先，Linux 兜底）
-_FONT_CANDIDATES = [
-    "/System/Library/Fonts/PingFang.ttc",
-    "/System/Library/Fonts/Songti.ttc",
-    "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    "/System/Library/Fonts/STHeiti Medium.ttc",
-    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-]
+# 中文可用字体候选（macOS 优先，Linux 兜底）；按字体族分列（v0.5 样式）
+_FONT_CANDIDATES = {
+    "sans": [
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    ],
+    "serif": [
+        "/System/Library/Fonts/Songti.ttc",
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    ],
+}
 
 
 def _run(cmd: list[str], timeout: int = 1800) -> None:
@@ -38,15 +45,19 @@ def _has_audio(path: str) -> bool:
     return "audio" in proc.stdout
 
 
-def _load_font(size: int):
+def _load_font(size: int, family: str = "sans"):
     from PIL import ImageFont
 
-    for path in _FONT_CANDIDATES:
+    for path in _FONT_CANDIDATES.get(family, []) + _FONT_CANDIDATES["sans"]:
         try:
             return ImageFont.truetype(path, size)
         except OSError:
             continue
     return None
+
+
+def _hex_rgb(color: str) -> tuple[int, int, int]:
+    return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
 
 
 def _effective_spec(ir: EditingIR) -> tuple[int, int, str]:
@@ -74,31 +85,53 @@ def _compose_graph(w: int, h: int, fill: str, fps: float) -> str:
 
 
 def _subtitle_pngs(ir: EditingIR, out_dir: Path) -> list[tuple[Path, float, float]]:
-    """每条字幕渲染成一张与成片同尺寸的透明 PNG。无字幕或无字体返回空列表。"""
-    items = sorted(
-        (s for t in ir.tracks if isinstance(t, SubtitleTrack) for s in t.items),
-        key=lambda s: s.timeline_start,
-    )
+    """每条字幕渲染成一张与成片同尺寸的透明 PNG。无字幕或无字体返回空列表。
+
+    v0.5：按字幕轨 style 绘制（位置/颜色/字号/描边/底条/字体族），缺省即历史行为。
+    """
+    from app.ir.schema import SubtitleStyle
+
+    tracks = [t for t in ir.tracks if isinstance(t, SubtitleTrack)]
+    items = sorted(((s, t.style) for t in tracks for s in t.items),
+                   key=lambda pair: pair[0].timeline_start)
     if not items:
         return []
 
     from PIL import Image, ImageDraw
 
     w, h, _ = _effective_spec(ir)
-    font = _load_font(max(round(h * 0.05), 16))
-    if font is None:
-        return []
-
     results = []
-    for i, sub in enumerate(items, start=1):
+    for i, (sub, style) in enumerate(items, start=1):
+        st = style or SubtitleStyle()
+        size = max(round(h * st.size_ratio), 16)
+        font = _load_font(size, st.font)
+        if font is None:
+            return []
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         box = draw.textbbox((0, 0), sub.content, font=font)
-        x = (w - (box[2] - box[0])) // 2
-        y = h - round(h * 0.12)
-        for dx, dy in ((-2, -2), (2, -2), (-2, 2), (2, 2), (0, 3)):  # 描边+投影，保证亮背景可读
-            draw.text((x + dx, y + dy), sub.content, font=font, fill=(0, 0, 0, 130))
-        draw.text((x, y), sub.content, font=font, fill=(255, 255, 255, 255))
+        if box[2] - box[0] > w * 0.92:  # 窄画幅长字幕自动缩字适配宽度
+            size = max(round(size * w * 0.92 / (box[2] - box[0])), 14)
+            font = _load_font(size, st.font)
+            box = draw.textbbox((0, 0), sub.content, font=font)
+        tw, th = box[2] - box[0], box[3] - box[1]
+        x = (w - tw) // 2
+        if st.position == "top":
+            y = round(h * 0.06)
+        elif st.position == "center":
+            y = (h - th) // 2
+        else:
+            y = h - round(h * 0.12)
+        if st.background:  # 半透明底条（圆角），留呼吸边距
+            pad = max(round(h * 0.012), 6)
+            draw.rounded_rectangle(
+                (x - pad * 2, y + box[1] - pad, x + tw + pad * 2, y + box[3] + pad),
+                radius=pad, fill=(0, 0, 0, 150),
+            )
+        if st.outline:
+            for dx, dy in ((-2, -2), (2, -2), (-2, 2), (2, 2), (0, 3)):  # 描边+投影，保证亮背景可读
+                draw.text((x + dx, y + dy), sub.content, font=font, fill=(0, 0, 0, 130))
+        draw.text((x, y), sub.content, font=font, fill=(*_hex_rgb(st.color), 255))
         png = out_dir / f"sub_{i}.png"
         img.save(png)
         results.append((png, sub.timeline_start, sub.timeline_end))

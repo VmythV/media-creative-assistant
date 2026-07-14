@@ -290,6 +290,84 @@ def reset_output(plan_id: int, db: Session = Depends(get_db)) -> dict:
     return {"plan_id": plan_id, "render": None}
 
 
+class SubtitleStyleRequest(BaseModel):
+    preset: str | None = None  # default/elegant/bold/minimal
+    position: str | None = None
+    size_ratio: float | None = None
+    color: str | None = None
+    outline: bool | None = None
+    background: bool | None = None
+    font: str | None = None
+
+
+def apply_subtitle_style(plan_id: int, **fields) -> dict:
+    """字幕样式核心（供 API 与对话执行器共用）：预设确定性展开 + 字段覆盖，写入全部字幕轨。"""
+    from app.ir.schema import SUBTITLE_PRESETS, SubtitleStyle
+
+    preset = fields.pop("preset", None) or "default"
+    if preset not in SUBTITLE_PRESETS:
+        raise ValueError(f"未知样式预设: {preset}（可选 {sorted(SUBTITLE_PRESETS)}）")
+    merged = {"preset": preset, **SUBTITLE_PRESETS[preset],
+              **{k: v for k, v in fields.items() if v is not None}}
+    try:
+        style = SubtitleStyle.model_validate(merged)
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"样式校验失败: {e}") from e
+
+    with db_session() as db:
+        plan = db.get(EditPlan, plan_id)
+        if plan is None:
+            raise ValueError("方案不存在")
+        if not plan.ir:
+            raise ValueError("方案没有 Editing IR")
+        ir = dict(plan.ir)
+        subtitle_tracks = [t for t in ir["tracks"] if t.get("type") == "subtitle"]
+        if not subtitle_tracks:
+            raise ValueError("该方案没有字幕轨（生成方案时要求字幕即可）")
+        if ir.get("version") in ("0.1", "0.2", "0.3", "0.4"):  # 样式需要 0.5
+            ir["version"] = "0.5"
+        style_dict = style.model_dump()
+        ir["tracks"] = [
+            {**t, "style": style_dict} if t.get("type") == "subtitle" else t
+            for t in ir["tracks"]
+        ]
+        try:
+            validate_ir(ir)
+        except IRValidationError as e:
+            raise ValueError(f"样式后 IR 校验失败: {e}") from e
+        plan.ir = ir
+        db.commit()
+    return style_dict
+
+
+@router.put("/plans/{plan_id}/subtitle-style")
+def set_subtitle_style(plan_id: int, req: SubtitleStyleRequest, db: Session = Depends(get_db)) -> dict:
+    """设置字幕样式（重新渲染生效；Resolve 时间线不支持，仅体现在成片）。"""
+    if db.get(EditPlan, plan_id) is None:
+        raise HTTPException(404, "方案不存在")
+    try:
+        style = apply_subtitle_style(plan_id, **req.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"plan_id": plan_id, "style": style}
+
+
+@router.delete("/plans/{plan_id}/subtitle-style")
+def reset_subtitle_style(plan_id: int, db: Session = Depends(get_db)) -> dict:
+    plan = db.get(EditPlan, plan_id)
+    if plan is None:
+        raise HTTPException(404, "方案不存在")
+    if plan.ir:
+        ir = dict(plan.ir)
+        ir["tracks"] = [
+            {k: v for k, v in t.items() if k != "style"} if t.get("type") == "subtitle" else t
+            for t in ir["tracks"]
+        ]
+        plan.ir = ir
+        db.commit()
+    return {"plan_id": plan_id, "style": None}
+
+
 class RecommendRequest(BaseModel):
     mood: str | None = None
     gain_db: float = -16.0

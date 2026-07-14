@@ -200,6 +200,9 @@ def _add_subtitles(media_pool, timeline, ir: EditingIR, report) -> dict:
     srt = export_srt(ir)
     if srt is None:
         return {"count": 0, "method": "none"}
+    styled = any(getattr(t, "style", None) for t in ir.tracks if t.type == "subtitle")
+    if styled:
+        report("subtitle", "字幕样式仅体现在渲染成片；Resolve 内请用字幕轨样式面板调整")
     srt_path = settings.data_dir / "output" / f"{ir.project.name}.srt"
     srt_path.parent.mkdir(parents=True, exist_ok=True)
     srt_path.write_text(srt, encoding="utf-8")
