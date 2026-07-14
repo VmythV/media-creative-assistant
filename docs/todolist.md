@@ -114,3 +114,4 @@
 - [x] Resolve adapter：配乐 AppendToTimeline(mediaType=2, recordFrame) 入新增音频轨（截齐时间线，失败降级媒体池）
 - [x] 前端：执行结果卡转场/配乐状态展示
 - [x] M10 验证：pytest 3 项通过（43 passed 全量）；真实方案（6 片段 5 转场 + 配乐）执行后 Resolve 时间线 525 帧 = IR 21.0s，V1 轨 5 处交叉叠化位置/时长与 IR 一致，配乐入 A2 轨铺满（脚本核实）
+- [x] 转场类型精确映射（M10 补强）：逐名探测 24 候选得出 FCPX 效果名词汇表（4 种可达类型，参数不被识别），10 种 IR 类型按语义映射；端到端验证 fade/fadewhite/wipeleft/circleclose → 交叉叠化/浸入颜色叠化/边缘划像/椭圆展开 全部正确（44 passed 全量）

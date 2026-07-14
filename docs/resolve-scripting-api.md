@@ -96,8 +96,9 @@ Resolve
 
 1. **音频精确入轨 ✅**：`AppendToTimeline([{mediaPoolItem: wav, startFrame: 0, endFrame: 74, mediaType: 2, trackIndex: 1, recordFrame: 90100}])` 精确落位 A1 轨 90100 帧、时长 74 帧；同轨追加第二段到 90250 也成功 → **多段配乐/音效对位可行**，M8 设计文档记录的"脚本 API 无法定位音频到时间线"已过时（当时误判源于视频片段自带联动音轨占位）。
 2. **FCPXML 转场导入 ✅**：含 `<transition name="Cross Dissolve" offset="50/25s" duration="25/25s"/>` 的 FCPXML 1.9 经 `ImportTimelineFromFile` 导入后，时间线 V1 轨出现真实转场对象（`GetItemListInTrack` 列出名为"交叉叠化"的 item，`GetMediaPoolItem()` 返回 None 可区分于普通片段）；`Export(EXPORT_FCPXML_1_9)` 回读仍保留 `<transition>` → **往返无损**。注意：两侧片段的 trim 必须留出转场余量（handle），FCPXML 内 spine offset 由我们显式计算。
-3. **EDL 叠化导入 ✅**：EDL `D 025` 语法导入同样产生"交叉叠化"（素材按 reel 名匹配媒体池，命名需谨慎；FCPXML 按 `media-rep src` 路径匹配更可靠，推荐 FCPXML 路径）。
-4. FCPXML **1.10 导出是 `.fcpxmld` 目录包**（内含 Info.fcpxml），1.9 是单文件——程序处理选 1.9。
+3. **FCPXML 转场效果名词汇表 ✅**（逐名探测 24 个候选，一名一时间线导入回读）：Resolve 按 **FCPX 效果名**匹配（不认自家 UI 名如 "Edge Wipe"/"Oval Iris"），可产生 4 种转场——`Cross Dissolve`→交叉叠化、`Fade To Color`→浸入颜色叠化、`Wipe`/`Slide`/`Doorway`→边缘划像、`Circle`→椭圆展开；未知名安全回退交叉叠化（不破坏导入，但 XML 特殊字符如 `&` 未转义会毁掉整个导入）。**参数不被识别**：`<param>` 里的颜色（key=3 color）/角度/方向/reverse 导入后均被忽略、回退默认值（往返导出验证），方向与颜色只能在 Resolve 内手调。Resolve 导出转场时的 effect uid 为 FCPX FxPlug UID（如 Cross Dissolve = `FxPlug:4731E73A-...`）。
+4. **EDL 叠化导入 ✅**：EDL `D 025` 语法导入同样产生"交叉叠化"（素材按 reel 名匹配媒体池，命名需谨慎；FCPXML 按 `media-rep src` 路径匹配更可靠，推荐 FCPXML 路径）。
+5. FCPXML **1.10 导出是 `.fcpxmld` 目录包**（内含 Info.fcpxml），1.9 是单文件——程序处理选 1.9。
 
 ## 6. 明确的 API 空白（截至 21.0.2.4）
 

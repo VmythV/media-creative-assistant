@@ -139,8 +139,9 @@ def _build_timeline_append(media_pool, ir: EditingIR, fps: float, report):
 def _build_timeline_fcpxml(media_pool, ir: EditingIR, report):
     """转场路径：生成含 <transition> 的 FCPXML 1.9 → ImportTimelineFromFile。
 
-    素材随导入按 media-rep 路径自动入媒体池；转场类型统一映射 Cross Dissolve
-    （Resolve 对 FCPXML 效果名识别未文档化），精确类型体现在渲染成片。
+    素材随导入按 media-rep 路径自动入媒体池；转场按 FCPX 效果名映射为 4 种
+    Resolve 转场（叠化/浸入颜色叠化/边缘划像/椭圆展开，实测词汇表见
+    docs/resolve-scripting-api.md §5），方向/颜色参数不被导入器识别。
     """
     fcpxml_path = settings.data_dir / "output" / f"{ir.project.name}.timeline.fcpxml"
     fcpxml_path.parent.mkdir(parents=True, exist_ok=True)

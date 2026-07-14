@@ -46,12 +46,13 @@ def test_fcpxml_transition_centered_math(sample_video):
     assert c1.get("duration") == "88/25s"
     # 转场1：居中于剪辑点 3.5s，offset = 3.5 − 0.5 = 3.0s
     assert t1.get("offset") == "75/25s" and t1.get("duration") == "25/25s"
-    assert t1.get("name") == "Cross Dissolve"
+    assert t1.get("name") == "Cross Dissolve"  # fade → Cross Dissolve
     # 片段2：4s，转入 1.0 转出 0.5 → 媒体入点 1.0+0.5=1.5s，spine 时长 4−0.5−0.25=3.25s
     assert c2.get("offset") == "88/25s" and c2.get("start") == "38/25s"
     assert c2.get("duration") == "81/25s"
     # 转场2：剪辑点 3.5+3.25=6.75s，offset = 6.75 − 0.25 = 6.5s = 162.5 帧 → round 取整 162
     assert t2.get("offset") == "162/25s" and t2.get("duration") == "12/25s"
+    assert t2.get("name") == "Wipe"  # wipeleft → Wipe（Resolve 边缘划像）
     # 片段3：2s，转入 0.5 → 媒体入点 2.25s，spine 时长 1.75s
     assert c3.get("offset") == "169/25s" and c3.get("start") == "56/25s"
     assert c3.get("duration") == "44/25s"
@@ -70,6 +71,22 @@ def test_fcpxml_without_transitions_unchanged(sample_video):
     clips = list(spine)
     assert clips[0].get("duration") == "100/25s"  # 无转场：spine 时长即 trim 长度
     assert clips[1].get("offset") == "100/25s" and clips[1].get("start") == "25/25s"
+
+
+def test_fcpx_transition_name_mapping():
+    """10 种 IR 转场类型 → 4 种 FCPX 效果名（Resolve 21 导入实测词汇表）。"""
+    from app.ir.exporters import _FCPX_TRANSITION_NAMES
+    from app.ir.schema import TRANSITION_TYPES
+
+    assert set(_FCPX_TRANSITION_NAMES) == TRANSITION_TYPES  # 每种类型都有映射
+    expected = {
+        "fade": "Cross Dissolve", "dissolve": "Cross Dissolve",
+        "fadeblack": "Fade To Color", "fadewhite": "Fade To Color",
+        "wipeleft": "Wipe", "wiperight": "Wipe",
+        "slideleft": "Slide", "slideright": "Slide",
+        "circleopen": "Circle", "circleclose": "Circle",
+    }
+    assert _FCPX_TRANSITION_NAMES == expected
 
 
 def test_edit_list_transition_positions(sample_video):

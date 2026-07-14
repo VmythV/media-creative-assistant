@@ -82,6 +82,23 @@ def _rational(seconds: float, fps: float) -> str:
     return f"{frames}/{int(fps)}s" if fps == int(fps) else f"{round(seconds * 1000)}/1000s"
 
 
+# IR 转场类型 → FCPX 效果名（Resolve 21 导入实测：按 FCPX 名匹配出 4 种转场，
+# 未知名回退交叉叠化；方向/颜色参数不被导入器识别，需在 Resolve 内调整）。
+# Cross Dissolve→交叉叠化 | Fade To Color→浸入颜色叠化 | Wipe/Slide→边缘划像 | Circle→椭圆展开
+_FCPX_TRANSITION_NAMES = {
+    "fade": "Cross Dissolve",
+    "dissolve": "Cross Dissolve",
+    "fadeblack": "Fade To Color",
+    "fadewhite": "Fade To Color",
+    "wipeleft": "Wipe",
+    "wiperight": "Wipe",
+    "slideleft": "Slide",
+    "slideright": "Slide",
+    "circleopen": "Circle",
+    "circleclose": "Circle",
+}
+
+
 def export_fcpxml(ir: EditingIR) -> str:
     """最小可用 FCPXML 1.9：视频轨片段（字幕经 SRT 单独交付）。"""
     fps = ir.project.fps
@@ -119,9 +136,9 @@ def export_fcpxml(ir: EditingIR) -> str:
             nxt = track.items[i + 1] if i + 1 < len(track.items) else None
             t_out = nxt.transition.duration if nxt and nxt.transition else 0.0
             if t_in:
-                # Resolve 对 FCPXML 转场效果名的识别未文档化，统一映射 Cross Dissolve（实测可导入）
                 ET.SubElement(
-                    spine, "transition", name="Cross Dissolve",
+                    spine, "transition",
+                    name=_FCPX_TRANSITION_NAMES.get(clip.transition.type, "Cross Dissolve"),
                     offset=_rational(pos - t_in / 2, fps), duration=_rational(t_in, fps),
                 )
             ET.SubElement(

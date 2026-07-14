@@ -196,7 +196,7 @@ function ExecutionCard({ plan }: { plan: Plan }) {
             )}
             {exec.resolve.transitions?.method === "fcpxml_import" && (
               <Descriptions.Item label="转场">
-                {exec.resolve.transitions.count} 处转场已随时间线导入（统一为交叉叠化；精确类型见渲染成片）
+                {exec.resolve.transitions.count} 处转场已随时间线导入（按类型映射为叠化/浸入颜色/划像/椭圆展开；方向与颜色可在 Resolve 中微调）
               </Descriptions.Item>
             )}
             {exec.resolve.transitions?.method === "unsupported" && (
