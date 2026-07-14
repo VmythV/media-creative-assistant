@@ -10,6 +10,11 @@ const SECTION_LABEL: Record<string, string> = {
 const SECTION_COLOR: Record<string, string> = {
   opening: "green", build: "blue", climax: "red", ending: "orange", broll: "default",
 };
+const TRANSITION_LABEL: Record<string, string> = {
+  fade: "叠化", fadeblack: "压黑", fadewhite: "闪白", dissolve: "溶解",
+  wipeleft: "左划像", wiperight: "右划像", slideleft: "左滑", slideright: "右滑",
+  circleopen: "圆形展开", circleclose: "圆形收拢",
+};
 const PLAN_STATUS: Record<string, { text: string; color: string }> = {
   generating: { text: "生成中", color: "processing" },
   draft: { text: "待确认", color: "warning" },
@@ -29,6 +34,11 @@ function ClipList({ clips, assets }: { clips: PlanClip[]; assets: Asset[] }) {
           <Space direction="vertical" size={0} style={{ width: "100%" }}>
             <Space wrap>
               <Typography.Text type="secondary">{i + 1}.</Typography.Text>
+              {c.transition && (
+                <Tag color="purple">
+                  ⇢ 转场：{TRANSITION_LABEL[c.transition.type] ?? c.transition.type} {c.transition.duration}s
+                </Tag>
+              )}
               <Tag color={SECTION_COLOR[c.section]}>{SECTION_LABEL[c.section] ?? c.section}</Tag>
               <Typography.Text strong>{nameOf(c.asset_id)}</Typography.Text>
               <Tag>{c.start.toFixed(1)}s - {c.end.toFixed(1)}s（{(c.end - c.start).toFixed(1)}s）</Tag>
@@ -157,6 +167,7 @@ function RenderCard({ plan }: { plan: Plan }) {
           </Descriptions.Item>
           <Descriptions.Item label="信息">
             {render.duration?.toFixed(1)} 秒 · {render.clips} 个片段
+            {render.transitions ? ` · ${render.transitions} 处转场` : ""}
             {render.subtitles_burned ? " · 已烧录字幕" : ""}
             {render.music ? ` · 配乐：${render.music}` : ""}
           </Descriptions.Item>
@@ -181,6 +192,11 @@ function ExecutionCard({ plan }: { plan: Plan }) {
             {exec.resolve.subtitles?.method === "media_pool" && (
               <Descriptions.Item label="字幕">
                 SRT 已导入媒体池，在 Resolve 中右键 → Insert Selected Subtitles to Timeline
+              </Descriptions.Item>
+            )}
+            {exec.resolve.transitions?.method === "unsupported" && (
+              <Descriptions.Item label="转场">
+                {exec.resolve.transitions.count} 处转场需在 Resolve 内手动添加（脚本 API 限制）；渲染成片含完整转场
               </Descriptions.Item>
             )}
           </Descriptions>

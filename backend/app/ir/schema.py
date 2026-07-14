@@ -1,9 +1,9 @@
-"""Editing IR v0.1：视频编辑中间表示（设计文档第 5 节）。
+"""Editing IR：视频编辑中间表示（设计文档第 5 节；§11 音频轨、§12 转场）。
 
 设计规则：
 - sources 与 tracks 分离，clip 只引用 source_id。
 - 每个 clip 带 role 与 reason（可解释性）。
-- transition/effect/audio track 在枚举中预留但校验器拒绝（防止模型幻觉产出未实现能力）。
+- effect 在枚举中预留但校验器拒绝（防止模型幻觉产出未实现能力）。
 """
 
 from pathlib import Path
@@ -11,10 +11,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-IR_VERSION = "0.2"
-SUPPORTED_VERSIONS = {"0.1", "0.2"}  # 0.1：无音频轨的存量方案
+IR_VERSION = "0.3"
+SUPPORTED_VERSIONS = {"0.1", "0.2", "0.3"}  # 0.1：无音频轨；0.2：无转场
 
 ClipRole = Literal["opening", "build", "climax", "ending", "broll"]
+
+# ffmpeg xfade 滤镜类型白名单（本机精简编译已确认含 xfade/acrossfade）
+TransitionType = Literal[
+    "fade", "fadeblack", "fadewhite", "dissolve",
+    "wipeleft", "wiperight", "slideleft", "slideright",
+    "circleopen", "circleclose",
+]
+TRANSITION_TYPES: frozenset[str] = frozenset(TransitionType.__args__)
 
 
 class Resolution(BaseModel):
@@ -45,12 +53,20 @@ class Trim(BaseModel):
         return self
 
 
+class Transition(BaseModel):
+    """与前一片段之间的转场（转场进入本片段，v0.3）。重叠消耗两侧素材。"""
+
+    type: TransitionType
+    duration: float = Field(default=0.5, gt=0, le=2.0)
+
+
 class Clip(BaseModel):
     type: Literal["clip"] = "clip"
     source_id: str
     trim: Trim
     role: ClipRole
     reason: str = ""
+    transition: Transition | None = None
 
 
 class Subtitle(BaseModel):
@@ -146,6 +162,19 @@ def validate_ir(data: dict, *, check_paths: bool = True) -> EditingIR:
                     errors.append(
                         f"video#{track.index} 第 {i + 1} 个片段 trim.end ({clip.trim.end}) 超出素材时长 ({src.duration})"
                     )
+            for i, clip in enumerate(track.items):
+                if i == 0 and clip.transition is not None:
+                    errors.append(f"video#{track.index} 首个片段不能有 transition（转场语义为与前一片段之间）")
+                # 转场消耗两侧重叠：转入 + 转出必须小于片段自身时长
+                t_in = clip.transition.duration if clip.transition else 0.0
+                nxt = track.items[i + 1] if i + 1 < len(track.items) else None
+                t_out = nxt.transition.duration if nxt and nxt.transition else 0.0
+                clip_len = clip.trim.end - clip.trim.start
+                if t_in + t_out >= clip_len:
+                    errors.append(
+                        f"video#{track.index} 第 {i + 1} 个片段时长 {clip_len:.2f}s 不足以承载"
+                        f"转入 {t_in}s + 转出 {t_out}s 的转场重叠"
+                    )
         elif track.type == "audio":
             if len(track.items) > 1:
                 errors.append(f"audio#{track.index} 仅支持单条配乐（MVP 限制），当前 {len(track.items)} 条")
@@ -171,9 +200,11 @@ def validate_ir(data: dict, *, check_paths: bool = True) -> EditingIR:
 
 
 def timeline_duration(ir: EditingIR) -> float:
-    """主视频轨（index 最小）总时长。"""
+    """主视频轨（index 最小）总时长。转场消耗重叠：总长 = Σ片段 − Σ转场。"""
     video_tracks = [t for t in ir.tracks if t.type == "video"]
     if not video_tracks:
         return 0.0
     main = min(video_tracks, key=lambda t: t.index)
-    return round(sum(c.trim.end - c.trim.start for c in main.items), 3)
+    total = sum(c.trim.end - c.trim.start for c in main.items)
+    total -= sum(c.transition.duration for c in main.items if c.transition)
+    return round(total, 3)

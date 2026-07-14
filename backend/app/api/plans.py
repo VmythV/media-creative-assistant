@@ -184,7 +184,8 @@ def set_music(plan_id: int, req: MusicRequest, db: Session = Depends(get_db)) ->
         raise HTTPException(400, "该文件不含音频流")
 
     ir = dict(plan.ir)
-    ir["version"] = "0.2"
+    if ir.get("version") == "0.1":  # 音频轨需要 0.2+；更高版本（0.3 转场）保持不降级
+        ir["version"] = "0.2"
     ir["sources"] = [s for s in ir["sources"] if s["id"] != MUSIC_SOURCE_ID] + [
         {"id": MUSIC_SOURCE_ID, "path": str(file), "duration": meta["duration"]}
     ]

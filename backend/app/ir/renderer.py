@@ -130,13 +130,46 @@ def render_video(
         seg_paths.append(seg)
         emit("segment", f"{i}/{len(clips)} {Path(src.path).name}")
 
-    # 2) concat（片段规格一致，直接流复制）
-    concat_list = seg_dir / "concat.txt"
-    concat_list.write_text("".join(f"file '{p}'\n" for p in seg_paths), encoding="utf-8")
+    # 2) 拼接：无转场走 concat 流复制快路径；有转场单次 filter_complex 链式折叠（设计文档 §12）
     merged = seg_dir / "merged.mp4"
-    _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-          "-i", str(concat_list), "-c", "copy", str(merged)])
-    emit("concat", f"{len(seg_paths)} 个片段合并完成")
+    transitions = [c.transition for c in clips]
+    if not any(transitions[1:]):
+        concat_list = seg_dir / "concat.txt"
+        concat_list.write_text("".join(f"file '{p}'\n" for p in seg_paths), encoding="utf-8")
+        _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+              "-i", str(concat_list), "-c", "copy", str(merged)])
+        emit("concat", f"{len(seg_paths)} 个片段合并完成")
+    else:
+        durs = [c.trim.end - c.trim.start for c in clips]
+        cmd = ["ffmpeg", "-y", "-v", "error"]
+        for p in seg_paths:
+            cmd += ["-i", str(p)]
+        # xfade 要求两输入 timebase 一致，而 concat 滤镜输出 1/1000000：全部视频输入统一 settb
+        chains: list[str] = [f"[{i}:v]settb=AVTB[vin{i}]" for i in range(len(clips))]
+        vprev, aprev = "[vin0]", "[0:a]"
+        out_len = durs[0]
+        for i in range(1, len(clips)):
+            t = transitions[i]
+            vlab, alab = f"[v{i}]", f"[a{i}]"
+            if t is not None:
+                offset = round(out_len - t.duration, 3)
+                chains.append(
+                    f"{vprev}[vin{i}]xfade=transition={t.type}"
+                    f":duration={t.duration}:offset={offset}{vlab}"
+                )
+                chains.append(f"{aprev}[{i}:a]acrossfade=d={t.duration}{alab}")
+                out_len += durs[i] - t.duration
+            else:
+                chains.append(f"{vprev}[vin{i}]concat=n=2:v=1:a=0{vlab}")
+                chains.append(f"{aprev}[{i}:a]concat=n=2:v=0:a=1{alab}")
+                out_len += durs[i]
+            vprev, aprev = vlab, alab
+        cmd += ["-filter_complex", ";".join(chains), "-map", vprev, "-map", aprev,
+                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", str(merged)]
+        _run(cmd)
+        n_trans = sum(1 for t in transitions[1:] if t)
+        emit("concat", f"{len(seg_paths)} 个片段合并完成（含 {n_trans} 处转场）")
 
     # 3) 配乐混音（视频流 copy，仅重编音频；设计文档 §11）
     music = next(
@@ -191,5 +224,6 @@ def render_video(
         "duration": timeline_duration(ir),
         "subtitles_burned": subtitles_burned,
         "clips": len(clips),
+        "transitions": sum(1 for c in clips if c.transition),
         "music": Path(src_map[music.source_id].path).name if music else None,
     }

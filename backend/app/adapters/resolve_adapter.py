@@ -116,6 +116,15 @@ def execute_ir(ir: EditingIR, *, progress=None) -> dict:
         music_result = {"file": Path(src.path).name, "method": "media_pool"}
         report("music", f"配乐 {music_result['file']} 已入媒体池，拖到 A1 轨即可")
 
+    # 转场：脚本 API 无公开接口在片段间插入转场，时间线为硬切（设计文档 §12）
+    transitions_result = None
+    n_transitions = sum(
+        1 for t in ir.tracks if isinstance(t, VideoTrack) for c in t.items if c.transition
+    )
+    if n_transitions:
+        transitions_result = {"count": n_transitions, "method": "unsupported"}
+        report("transitions", f"{n_transitions} 处转场需在 Resolve 内手动添加（脚本 API 限制）")
+
     pm.SaveProject()
     return {
         "project": project_name,
@@ -123,6 +132,7 @@ def execute_ir(ir: EditingIR, *, progress=None) -> dict:
         "clips": len(clip_infos),
         "subtitles": subtitle_result,
         "music": music_result,
+        "transitions": transitions_result,
     }
 
 

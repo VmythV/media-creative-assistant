@@ -55,11 +55,16 @@ export interface PlanClip {
   end: number;
   reason: string;
   subtitle: string | null;
+  transition?: { type: string; duration: number } | null;
 }
 
 export interface ExecutionResult {
   mode: string;
-  resolve?: { project: string; timeline: string; clips: number; subtitles: Record<string, unknown> };
+  resolve?: {
+    project: string; timeline: string; clips: number;
+    subtitles: Record<string, unknown>;
+    transitions?: { count: number; method: string } | null;
+  };
   artifacts: Record<string, string>;
 }
 
@@ -77,6 +82,7 @@ export interface RenderResult {
   duration?: number;
   subtitles_burned?: boolean;
   clips?: number;
+  transitions?: number;
   music?: string | null;
   error?: string;
 }

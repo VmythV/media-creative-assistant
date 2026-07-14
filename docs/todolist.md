@@ -97,3 +97,12 @@
 - [x] `/output` 静态托管 + 渲染结果 video_url + 前端 `<video>` 内嵌预览
 - [x] 前端：方案卡配乐设置/移除入口
 - [x] M8 验证：pytest 4 项通过（35 passed 全量）；真实方案挂合成氛围配乐渲染，成片含可闻 BGM（mean −29.8dB），浏览器预览 URL 200
+
+## M9 转场效果（设计文档 §12）
+
+- [x] IR v0.3：Clip.transition（类型白名单 + 时长/位置约束校验）
+- [x] 确定性转换：转场钳制（白名单过滤 + 时长 clamp）+ 字幕独占时间槽 + timeline_duration 扣减
+- [x] 渲染器：xfade/acrossfade 链式渲染（混合硬切 concat；无转场保持流复制快路径；settb 统一 timebase）
+- [x] Planning 提示词：transition 字段 + 节奏选型指引；diff_plans 转场变化检测
+- [x] Resolve adapter：转场不支持提示（summary 记录）；前端片段列表转场标记
+- [x] M9 验证：pytest 5 项通过（40 passed 全量）；真实方案（qwen3.7-max）自主为 6 片段选 5 处转场（fade/dissolve），成片 21.1s = Σ片段 24s − 转场重叠 3s，抽帧确认 fade/dissolve 混合中间态与字幕沿用规则
