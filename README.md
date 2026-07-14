@@ -2,7 +2,7 @@
 
 面向视频创作者的 AI 剪辑副驾驶：素材理解 → 精彩片段推荐 → 剪辑方案 → DaVinci Resolve 可编辑工程。
 
-设计标杆：`docs/mvp-technical-design.md` · 进度：`docs/todolist.md`
+设计标杆：`docs/mvp-technical-design.md` · 进度：`docs/todolist.md` · 第二阶段路线：`docs/phase2-roadmap.md`
 
 ## 环境要求
 

@@ -123,3 +123,7 @@
 - [x] 注入：generate_plan/revise_plan system prompt 附加用户偏好
 - [x] API：GET/POST/DELETE /api/memory；前端「偏好记忆」页签
 - [x] M11 验证：pytest 5 项通过（49 passed 全量）；真实修订指令沉淀 2 条偏好（转场克制/字幕含蓄，一次性指令被正确忽略），下一次生成明显遵循（转场全叠化、字幕无感叹号留白风格）
+
+---
+
+第二阶段（M12 起）路线与优先级见 `docs/phase2-roadmap.md`；立项时逐里程碑迁入本清单。
