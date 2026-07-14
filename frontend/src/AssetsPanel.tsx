@@ -1,5 +1,5 @@
 import {
-  Button, Descriptions, Drawer, Empty, Input, List, Space, Table, Tag, Typography, message,
+  Button, Descriptions, Drawer, Empty, Input, List, Popconfirm, Space, Table, Tag, Typography, message,
 } from "antd";
 import { useState } from "react";
 import { api, type Asset, type Highlight } from "./api";
@@ -82,18 +82,32 @@ export function AssetsPanel({ assets, refresh }: { assets: Asset[]; refresh: () 
         size="middle"
         locale={{ emptyText: <Empty description="还没有素材，先导入一个视频目录" /> }}
         columns={[
-          { title: "文件", dataIndex: "filename", ellipsis: true },
-          { title: "时长", dataIndex: "duration", width: 90, render: fmtDuration },
           {
-            title: "规格", width: 140,
-            render: (_, a) => (a.width ? `${a.width}x${a.height} @${a.fps ?? "?"}fps` : "-"),
+            title: "", width: 96,
+            render: (_, a) => (
+              <img
+                src={`/api/assets/${a.id}/thumbnail`} alt=""
+                style={{ width: 80, height: 45, objectFit: "cover", borderRadius: 4, background: "#f0f0f0" }}
+                onError={(e) => { (e.target as HTMLImageElement).style.visibility = "hidden"; }}
+              />
+            ),
           },
+          { title: "文件", dataIndex: "filename", ellipsis: true },
+          {
+            title: "分类", width: 90,
+            render: (_, a) => (a.category ? <Tag color="purple">{a.category}</Tag> : "-"),
+          },
+          {
+            title: "片段", dataIndex: "highlight_count", width: 70,
+            render: (n: number | undefined) => (n ? `${n} 个` : "-"),
+          },
+          { title: "时长", dataIndex: "duration", width: 90, render: fmtDuration },
           {
             title: "状态", dataIndex: "status", width: 90,
             render: (s: string) => <Tag color={STATUS_TAG[s]?.color}>{STATUS_TAG[s]?.text ?? s}</Tag>,
           },
           {
-            title: "操作", width: 170,
+            title: "操作", width: 250,
             render: (_, a) => (
               <Space>
                 <Button size="small" onClick={() => api.analyze(a.id).then(refresh)}
@@ -101,8 +115,21 @@ export function AssetsPanel({ assets, refresh }: { assets: Asset[]; refresh: () 
                   分析
                 </Button>
                 <Button size="small" onClick={() => openDetail(a)} disabled={a.status !== "analyzed"}>
-                  查看结果
+                  结果
                 </Button>
+                <Button size="small"
+                  onClick={() => api.reanalyze(a.id)
+                    .then(() => { message.info("已清除缓存并重新分析"); refresh(); })
+                    .catch((e) => message.error(String(e)))}
+                  disabled={a.status === "analyzing"}>
+                  重析
+                </Button>
+                <Popconfirm title="删除该素材登记？（文件与已生成方案不受影响）"
+                  onConfirm={() => api.deleteAsset(a.id)
+                    .then(() => { message.success("已删除"); refresh(); })
+                    .catch((e) => message.error(String(e)))}>
+                  <Button size="small" danger>删</Button>
+                </Popconfirm>
               </Space>
             ),
           },

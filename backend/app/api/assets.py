@@ -107,7 +107,72 @@ def import_assets(req: ImportRequest, db: Session = Depends(get_db)) -> dict:
 @router.get("/assets")
 def list_assets(db: Session = Depends(get_db)) -> dict:
     assets = db.query(Asset).order_by(Asset.id).all()
-    return {"assets": [_asset_dict(a) for a in assets]}
+    # 附加分类与精彩片段数（M17 素材列表增强）
+    summaries = {
+        r.content_hash: r.payload
+        for r in db.query(AnalysisRecord).filter_by(kind="summary").all()
+    }
+    result = []
+    for a in assets:
+        d = _asset_dict(a)
+        s = summaries.get(a.content_hash) or {}
+        d["category"] = s.get("category")
+        d["highlight_count"] = len(s.get("highlights") or [])
+        result.append(d)
+    return {"assets": result}
+
+
+@router.delete("/assets/{asset_id}")
+def delete_asset(asset_id: int, db: Session = Depends(get_db)) -> dict:
+    """删除素材登记（已生成方案不受影响：IR 记录的是文件路径）。分析缓存按 hash 保留可复用。"""
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(404, "素材不存在")
+    db.delete(asset)
+    db.commit()
+    return {"deleted": asset_id}
+
+
+@router.post("/assets/{asset_id}/reanalyze")
+async def reanalyze_asset(asset_id: int, db: Session = Depends(get_db)) -> dict:
+    """清除该素材分析缓存并重跑管线（模型升级/结果不满意时用）。"""
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(404, "素材不存在")
+    db.query(AnalysisRecord).filter_by(content_hash=asset.content_hash).delete()
+    asset.status = "imported"
+    db.commit()
+    asyncio.create_task(analyze_asset(asset_id))
+    return {"status": "started", "asset_id": asset_id}
+
+
+@router.get("/assets/{asset_id}/thumbnail")
+def asset_thumbnail(asset_id: int, db: Session = Depends(get_db)):
+    """素材封面：优先复用分析缓存抽帧，缺失时按需生成并缓存。"""
+    import subprocess
+
+    from fastapi.responses import FileResponse
+
+    from app.config import settings
+
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(404, "素材不存在")
+    frames_dir = settings.data_dir / "cache" / asset.content_hash / "frames"
+    jpgs = sorted(frames_dir.glob("*.jpg")) if frames_dir.is_dir() else []
+    if not jpgs:
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        thumb = frames_dir / "thumb.jpg"
+        ts = (asset.duration or 2.0) * 0.25
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-ss", str(ts), "-i", asset.path,
+             "-frames:v", "1", "-vf", "scale=320:-2", str(thumb)],
+            capture_output=True, timeout=60, check=False,
+        )
+        if proc.returncode != 0 or not thumb.is_file():
+            raise HTTPException(404, "无法生成缩略图")
+        jpgs = [thumb]
+    return FileResponse(jpgs[0], media_type="image/jpeg")
 
 
 @router.get("/assets/{asset_id}")

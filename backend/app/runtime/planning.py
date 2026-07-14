@@ -71,6 +71,35 @@ def _load_analyzed_assets(asset_ids: list[int] | None) -> list[dict]:
         return result
 
 
+MAX_BRIEF_ASSETS = 20  # 超过则按创作目标筛选（M17 简报检索化）
+
+
+def _select_for_goal(analyzed: list[dict], goal: str,
+                     limit: int = MAX_BRIEF_ASSETS) -> tuple[list[dict], bool]:
+    """素材超阈值时按目标确定性筛选 top-N：2-gram 关键词命中 ×2 + 最高片段评分。
+
+    为向量检索留接口（替换本函数即可）。返回 (选中素材, 是否发生了筛选)。
+    """
+    if len(analyzed) <= limit:
+        return analyzed, False
+    grams = {goal[i:i + 2] for i in range(len(goal) - 1) if goal[i:i + 2].strip()}
+
+    def score(item: dict) -> float:
+        s = item["summary"]
+        text = " ".join(filter(None, [
+            s.get("category") or "",
+            " ".join(h.get("reason", "") for h in (s.get("highlights") or [])),
+            ((item.get("transcript") or {}).get("text") or "")[:500],
+        ]))
+        hits = sum(1 for g in grams if g in text)
+        best = max((h.get("score", 0) for h in (s.get("highlights") or [])), default=0)
+        return hits * 2 + best
+
+    ranked = sorted(analyzed, key=score, reverse=True)[:limit]
+    ranked.sort(key=lambda it: it["asset"].id)  # 稳定输出顺序
+    return ranked, True
+
+
 def _build_material_brief(analyzed: list[dict]) -> str:
     """把素材分析压缩成给模型的简报。"""
     lines = []
@@ -217,7 +246,11 @@ async def generate_plan(goal: str, asset_ids: list[int] | None = None) -> dict:
     if not analyzed:
         raise ValueError("没有已完成分析的素材，请先导入并分析素材")
 
+    total = len(analyzed)
+    analyzed, filtered = _select_for_goal(analyzed, goal)
     brief = _build_material_brief(analyzed)
+    if filtered:
+        brief = f"（素材库共 {total} 个，已按创作目标筛选出 {len(analyzed)} 个最相关）\n{brief}"
     messages = [
         {"role": "system", "content": PLAN_SYSTEM_PROMPT + _preferences_block()},
         {"role": "user", "content": f"创作目标：{goal}\n\n可用素材：\n{brief}"},
@@ -236,6 +269,14 @@ async def revise_plan(base_plan: dict, instruction: str, asset_ids: list[int] | 
     if not analyzed:
         raise ValueError("没有已完成分析的素材")
 
+    # 修订时按"原方案标题 + 修订指令"筛选，但原方案引用的素材必须保留（IR 转换依赖）
+    used_ids = {c.get("asset_id") for c in base_plan.get("clips", [])}
+    selected, _ = _select_for_goal(analyzed, f"{base_plan.get('title', '')} {instruction}")
+    selected_ids = {item["asset"].id for item in selected}
+    for item in analyzed:
+        if item["asset"].id in used_ids and item["asset"].id not in selected_ids:
+            selected.append(item)
+    analyzed = sorted(selected, key=lambda it: it["asset"].id)
     brief = _build_material_brief(analyzed)
     messages = [
         {"role": "system", "content": PLAN_SYSTEM_PROMPT + REVISE_RULE + _preferences_block()},

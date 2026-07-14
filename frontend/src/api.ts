@@ -17,6 +17,8 @@ export interface Asset {
   fps: number | null;
   has_audio: boolean;
   status: string;
+  category?: string | null;
+  highlight_count?: number;
 }
 
 export interface Highlight {
@@ -151,6 +153,8 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
   analyze: (id: number) => request(`/api/assets/${id}/analyze`, { method: "POST" }),
+  reanalyze: (id: number) => request(`/api/assets/${id}/reanalyze`, { method: "POST" }),
+  deleteAsset: (id: number) => request(`/api/assets/${id}`, { method: "DELETE" }),
   analyzeAll: () => request("/api/assets/analyze-all", { method: "POST" }),
   analysis: (id: number) =>
     request<{ asset: Asset; analysis: Record<string, any> }>(`/api/assets/${id}/analysis`),
