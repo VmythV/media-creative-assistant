@@ -64,9 +64,10 @@ def execute_ir(ir: EditingIR, *, progress=None) -> dict:
     report("project", project_name)
 
     fps = ir.project.fps
+    res = ir.render if ir.render is not None else ir.project.resolution  # 交付规格优先（v0.4）
     project.SetSetting("timelineFrameRate", str(int(fps) if fps == int(fps) else fps))
-    project.SetSetting("timelineResolutionWidth", str(ir.project.resolution.width))
-    project.SetSetting("timelineResolutionHeight", str(ir.project.resolution.height))
+    project.SetSetting("timelineResolutionWidth", str(res.width))
+    project.SetSetting("timelineResolutionHeight", str(res.height))
 
     media_pool = project.GetMediaPool()
     clips = [c for t in ir.tracks if isinstance(t, VideoTrack) for c in t.items]

@@ -49,6 +49,30 @@ def _load_font(size: int):
     return None
 
 
+def _effective_spec(ir: EditingIR) -> tuple[int, int, str]:
+    """交付规格（v0.4）：ir.render 优先，缺省按时间线规格 + pad（兼容旧行为）。"""
+    if ir.render is not None:
+        return ir.render.width, ir.render.height, ir.render.fill
+    return ir.project.resolution.width, ir.project.resolution.height, "pad"
+
+
+def _compose_graph(w: int, h: int, fill: str, fps: float) -> str:
+    """单片段归一化滤镜图：目标画幅 + 构图策略（设计文档 phase2 §2）。"""
+    if fill == "crop":
+        return (f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
+                f"crop={w}:{h},fps={fps},format=yuv420p[vout]")
+    if fill == "blur":
+        return (
+            f"[0:v]split[bg][fg];"
+            f"[bg]scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"crop={w}:{h},boxblur=20:2[bgb];"
+            f"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fgs];"
+            f"[bgb][fgs]overlay=(W-w)/2:(H-h)/2,fps={fps},format=yuv420p[vout]"
+        )
+    return (f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p[vout]")
+
+
 def _subtitle_pngs(ir: EditingIR, out_dir: Path) -> list[tuple[Path, float, float]]:
     """每条字幕渲染成一张与成片同尺寸的透明 PNG。无字幕或无字体返回空列表。"""
     items = sorted(
@@ -60,7 +84,7 @@ def _subtitle_pngs(ir: EditingIR, out_dir: Path) -> list[tuple[Path, float, floa
 
     from PIL import Image, ImageDraw
 
-    w, h = ir.project.resolution.width, ir.project.resolution.height
+    w, h, _ = _effective_spec(ir)
     font = _load_font(max(round(h * 0.05), 16))
     if font is None:
         return []
@@ -104,14 +128,11 @@ def render_video(
     seg_dir = out_dir / "segments"
     seg_dir.mkdir(exist_ok=True)
     src_map = {s.id: s for s in ir.sources}
-    w, h = ir.project.resolution.width, ir.project.resolution.height
+    w, h, fill = _effective_spec(ir)
     fps = ir.project.fps
 
-    # 1) 各片段 trim 并统一到成片规格（含统一音轨，无音轨补静音，保证 concat 一致）
-    vf = (
-        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p"
-    )
+    # 1) 各片段 trim 并统一到交付规格（含统一音轨，无音轨补静音，保证 concat 一致）
+    graph = _compose_graph(w, h, fill, fps)
     seg_paths = []
     for i, clip in enumerate(clips, start=1):
         src = src_map[clip.source_id]
@@ -120,11 +141,11 @@ def render_video(
         cmd = ["ffmpeg", "-y", "-v", "error",
                "-ss", str(clip.trim.start), "-to", str(clip.trim.end), "-i", src.path]
         if _has_audio(src.path):
-            cmd += ["-map", "0:v:0", "-map", "0:a:0"]
+            cmd += ["-filter_complex", graph, "-map", "[vout]", "-map", "0:a:0"]
         else:
             cmd += ["-f", "lavfi", "-t", str(dur), "-i", "anullsrc=r=48000:cl=stereo",
-                    "-map", "0:v:0", "-map", "1:a:0"]
-        cmd += ["-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                    "-filter_complex", graph, "-map", "[vout]", "-map", "1:a:0"]
+        cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
                 "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(seg)]
         _run(cmd)
         seg_paths.append(seg)
@@ -222,6 +243,7 @@ def render_video(
     return {
         "video": str(out_path),
         "duration": timeline_duration(ir),
+        "resolution": f"{w}x{h}",
         "subtitles_burned": subtitles_burned,
         "clips": len(clips),
         "transitions": sum(1 for c in clips if c.transition),

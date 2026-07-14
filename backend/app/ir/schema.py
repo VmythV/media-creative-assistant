@@ -11,8 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-IR_VERSION = "0.3"
-SUPPORTED_VERSIONS = {"0.1", "0.2", "0.3"}  # 0.1：无音频轨；0.2：无转场
+IR_VERSION = "0.4"
+SUPPORTED_VERSIONS = {"0.1", "0.2", "0.3", "0.4"}  # 0.1：无音频轨；0.2：无转场；0.3：无交付规格
 
 ClipRole = Literal["opening", "build", "climax", "ending", "broll"]
 
@@ -111,12 +111,30 @@ class SubtitleTrack(BaseModel):
     items: list[Subtitle] = []
 
 
+class RenderSpec(BaseModel):
+    """交付规格（v0.4）：与时间线规格（project.resolution）解耦；缺省即按时间线规格输出。
+
+    fill：目标画幅与素材不符时的构图策略——pad 加黑边（兼容旧行为）/
+    crop 裁满 / blur 模糊背景居中（竖屏推荐）。
+    """
+
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    fill: Literal["pad", "crop", "blur"] = "blur"
+
+    @model_validator(mode="after")
+    def check_even(self) -> "RenderSpec":
+        if self.width % 2 or self.height % 2:
+            raise ValueError(f"交付分辨率必须为偶数（libx264 要求）: {self.width}x{self.height}")
+        return self
+
+
 class EditingIR(BaseModel):
     version: str
     project: ProjectSettings
     sources: list[Source] = []
     tracks: list[VideoTrack | SubtitleTrack | AudioTrack] = []
-    render: None = None  # schema 预留
+    render: RenderSpec | None = None  # 交付规格（v0.4 启用）
 
     @field_validator("version")
     @classmethod

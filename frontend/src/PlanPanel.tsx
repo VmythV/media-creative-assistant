@@ -1,5 +1,5 @@
 import {
-  Alert, Button, Card, Collapse, Descriptions, Empty, Input, List, Space, Steps, Tag, Typography, message,
+  Alert, Button, Card, Collapse, Descriptions, Empty, Input, List, Segmented, Space, Steps, Tag, Typography, message,
 } from "antd";
 import { useState } from "react";
 import { api, type Asset, type Plan, type PlanClip } from "./api";
@@ -148,6 +148,36 @@ function MusicBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
   );
 }
 
+function OutputBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
+  const render = (plan.ir as { render?: { width: number; height: number } | null } | null)?.render;
+  const current = render
+    ? (render.width === render.height ? "1:1" : render.width > render.height ? "16:9" : "9:16")
+    : "auto";
+  const set = (aspect: string) => {
+    const p = aspect === "auto"
+      ? api.resetOutput(plan.id)
+      : api.setOutput(plan.id, aspect);
+    p.then(() => { message.success("输出画幅已更新（重新渲染生效）"); refresh(); })
+      .catch((e) => message.error(String(e)));
+  };
+  return (
+    <Space>
+      <Typography.Text type="secondary">输出画幅：</Typography.Text>
+      <Segmented
+        size="small"
+        value={current}
+        options={[
+          { label: "跟随素材", value: "auto" },
+          { label: "横屏 16:9", value: "16:9" },
+          { label: "竖屏 9:16", value: "9:16" },
+          { label: "方形 1:1", value: "1:1" },
+        ]}
+        onChange={(v) => set(String(v))}
+      />
+    </Space>
+  );
+}
+
 function RenderCard({ plan }: { plan: Plan }) {
   const render = plan.plan.render;
   if (!render) return null;
@@ -166,7 +196,7 @@ function RenderCard({ plan }: { plan: Plan }) {
             <Typography.Text code copyable>{render.video}</Typography.Text>
           </Descriptions.Item>
           <Descriptions.Item label="信息">
-            {render.duration?.toFixed(1)} 秒 · {render.clips} 个片段
+            {render.duration?.toFixed(1)} 秒 · {render.resolution ? `${render.resolution} · ` : ""}{render.clips} 个片段
             {render.transitions ? ` · ${render.transitions} 处转场` : ""}
             {render.subtitles_burned ? " · 已烧录字幕" : ""}
             {render.music ? ` · 配乐：${render.music}` : ""}
@@ -329,6 +359,7 @@ export function PlanPanel({
                   <>
                     <ReviseBox plan={p} refresh={refresh} />
                     <MusicBox plan={p} refresh={refresh} />
+                    <OutputBox plan={p} refresh={refresh} />
                   </>
                 )}
                 <DiffCard plan={p} />

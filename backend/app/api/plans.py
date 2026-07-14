@@ -225,6 +225,71 @@ def set_music(plan_id: int, req: MusicRequest, db: Session = Depends(get_db)) ->
     return {"plan_id": plan_id, "music": filename, "gain_db": req.gain_db}
 
 
+ASPECT_PRESETS = {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080)}
+
+
+class OutputRequest(BaseModel):
+    aspect: str | None = None  # 16:9 / 9:16 / 1:1
+    width: int | None = None
+    height: int | None = None
+    fill: str = "blur"
+
+
+def apply_output(plan_id: int, *, aspect: str | None = None, width: int | None = None,
+                 height: int | None = None, fill: str = "blur") -> dict:
+    """交付规格核心（供 API 与对话执行器共用）：确定性写 IR render 字段（v0.4）。"""
+    if aspect:
+        if aspect not in ASPECT_PRESETS:
+            raise ValueError(f"未知画幅: {aspect}（可选 {sorted(ASPECT_PRESETS)}）")
+        width, height = ASPECT_PRESETS[aspect]
+    if not width or not height:
+        raise ValueError("需要 aspect 预设或显式 width/height")
+
+    with db_session() as db:
+        plan = db.get(EditPlan, plan_id)
+        if plan is None:
+            raise ValueError("方案不存在")
+        if not plan.ir:
+            raise ValueError("方案没有 Editing IR")
+        ir = dict(plan.ir)
+        if ir.get("version") in ("0.1", "0.2", "0.3"):  # render 规格需要 0.4
+            ir["version"] = "0.4"
+        ir["render"] = {"width": width, "height": height, "fill": fill}
+        try:
+            validate_ir(ir)
+        except IRValidationError as e:
+            raise ValueError(f"交付规格校验失败: {e}") from e
+        plan.ir = ir
+        db.commit()
+    return {"width": width, "height": height, "fill": fill}
+
+
+@router.put("/plans/{plan_id}/output")
+def set_output(plan_id: int, req: OutputRequest, db: Session = Depends(get_db)) -> dict:
+    """设置交付规格（画幅/分辨率/构图策略），重新渲染生效。"""
+    if db.get(EditPlan, plan_id) is None:
+        raise HTTPException(404, "方案不存在")
+    try:
+        spec = apply_output(plan_id, aspect=req.aspect, width=req.width,
+                            height=req.height, fill=req.fill)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"plan_id": plan_id, "render": spec}
+
+
+@router.delete("/plans/{plan_id}/output")
+def reset_output(plan_id: int, db: Session = Depends(get_db)) -> dict:
+    plan = db.get(EditPlan, plan_id)
+    if plan is None:
+        raise HTTPException(404, "方案不存在")
+    if plan.ir:
+        ir = dict(plan.ir)
+        ir["render"] = None
+        plan.ir = ir
+        db.commit()
+    return {"plan_id": plan_id, "render": None}
+
+
 @router.delete("/plans/{plan_id}/music")
 def remove_music(plan_id: int, db: Session = Depends(get_db)) -> dict:
     plan = db.get(EditPlan, plan_id)

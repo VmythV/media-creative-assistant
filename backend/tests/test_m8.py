@@ -112,7 +112,7 @@ async def test_music_api(sample_video, music_file, analyzed_asset):
                           json={"path": str(music_file), "gain_db": -10})
         assert resp.status_code == 200 and resp.json()["music"] == "bgm.wav"
         ir = client.get(f"/api/plans/{plan_id}").json()["ir"]
-        assert ir["version"] in ("0.2", "0.3")  # 0.1 存量才升 0.2；新方案 0.3 不降级
+        assert ir["version"] not in ("0.1",)  # 0.1 存量才升 0.2；新方案版本不降级
         audio = [t for t in ir["tracks"] if t["type"] == "audio"]
         assert len(audio) == 1 and audio[0]["items"][0]["gain_db"] == -10
 

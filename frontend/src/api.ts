@@ -81,6 +81,7 @@ export interface RenderResult {
   video?: string;
   video_url?: string;
   duration?: number;
+  resolution?: string;
   subtitles_burned?: boolean;
   clips?: number;
   transitions?: number;
@@ -171,6 +172,12 @@ export const api = {
       method: "PUT", body: JSON.stringify({ path }),
     }),
   removeMusic: (id: number) => request(`/api/plans/${id}/music`, { method: "DELETE" }),
+  setOutput: (id: number, aspect: string, fill = "blur") =>
+    request<{ render: { width: number; height: number; fill: string } }>(
+      `/api/plans/${id}/output`,
+      { method: "PUT", body: JSON.stringify({ aspect, fill }) },
+    ),
+  resetOutput: (id: number) => request(`/api/plans/${id}/output`, { method: "DELETE" }),
   logs: () => request<{ logs: LogEntry[] }>("/api/logs"),
   chat: (message: string, session_id?: string | null) =>
     request<{ session_id: string; reply: string; actions: ChatAction[] }>(

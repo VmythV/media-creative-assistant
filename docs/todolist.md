@@ -136,3 +136,13 @@
 - [x] unsupported 意图：能力边界清单驱动的"原因 + 手动指引"回复
 - [x] API：POST /api/chat + GET /api/chat/{session_id}；前端「对话」页签（默认页，消息流 + 动作卡）
 - [x] M12 验证：pytest 4 项通过（53 passed 全量）；真实走查："做15秒江南短片带字幕转场配乐渲染出来"一句话串联 create_plan→set_music→render 全部完成（成片 17s URL 200）；"节奏再快一点+加画中画"→ 修订正确指代当前方案（20s→13.5s）且画中画获得 Resolve 手动指引
+
+## M13 输出规格与竖屏（phase2-roadmap §2）
+
+- [x] IR v0.4：render 交付规格（width/height/fill 模式，偶数校验），与时间线规格解耦
+- [x] 渲染器：按 render 规格输出；fill 三模式（pad 兼容现状 / crop 裁满 / blur 模糊背景居中）；字幕自适应
+- [x] API：PUT/DELETE /plans/{id}/output（画幅预设 9:16/16:9/1:1，确定性写 IR）
+- [x] Resolve/FCPXML：时间线分辨率采用交付规格
+- [x] 对话：set_output_spec 意图（白名单+提示词），能力边界清单移除"竖屏切换"
+- [x] 前端：方案卡画幅选择（跟随素材/16:9/9:16/1:1）；成片卡显示分辨率
+- [x] M13 验证：pytest 5 项通过（58 passed 全量）；真实对话"改成竖屏发抖音用重新渲染"→ set_output_spec(9:16)+render 自动串联，成片 1080×1920，抽帧确认模糊背景居中构图

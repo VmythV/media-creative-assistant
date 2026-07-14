@@ -102,7 +102,7 @@ _FCPX_TRANSITION_NAMES = {
 def export_fcpxml(ir: EditingIR) -> str:
     """最小可用 FCPXML 1.9：视频轨片段（字幕经 SRT 单独交付）。"""
     fps = ir.project.fps
-    res = ir.project.resolution
+    res = ir.render if ir.render is not None else ir.project.resolution  # 交付规格优先（v0.4）
     frame_dur = f"1/{int(fps)}s" if fps == int(fps) else f"1000/{round(fps * 1000)}s"
 
     root = ET.Element("fcpxml", version="1.9")
