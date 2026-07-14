@@ -15,6 +15,7 @@ from app.ir import exporters
 from app.ir.schema import validate_ir
 from app.runtime.events import bus
 from app.store.db import db_session, get_db
+from app.runtime.tasks import spawn
 from app.store.models import EditPlan, TaskLog
 from app.tools.registry import registry
 
@@ -66,7 +67,8 @@ async def execute_plan(plan_id: int, req: ExecuteRequest | None = None, db: Sess
         raise HTTPException(400, "方案没有 Editing IR")
     ir_dict = dict(plan.ir)
 
-    asyncio.create_task(run_execution(plan_id, ir_dict, force_fallback=req.force_fallback))
+    spawn("execute", {"plan_id": plan_id, "force_fallback": req.force_fallback},
+          run_execution(plan_id, ir_dict, force_fallback=req.force_fallback))
     return {"plan_id": plan_id, "status": "executing"}
 
 
@@ -130,7 +132,8 @@ async def render_plan(plan_id: int, req: RenderRequest | None = None,
         raise HTTPException(400, "方案没有 Editing IR")
     ir_dict = dict(plan.ir)
 
-    asyncio.create_task(_render_safely(plan_id, ir_dict, req.engine))
+    spawn("render", {"plan_id": plan_id, "engine": req.engine},
+          _render_safely(plan_id, ir_dict, req.engine))
     return {"plan_id": plan_id, "status": "rendering", "engine": req.engine}
 
 

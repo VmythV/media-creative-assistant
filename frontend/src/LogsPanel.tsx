@@ -1,5 +1,6 @@
 import { Empty, Table, Tabs, Tag, Typography } from "antd";
-import type { AppEvent, LogEntry } from "./api";
+import { useEffect, useState } from "react";
+import { api, type AppEvent, type BackgroundTask, type LogEntry } from "./api";
 
 function EventFeed({ events }: { events: AppEvent[] }) {
   if (events.length === 0) return <Empty description="暂无事件（分析/执行时这里会实时滚动）" />;
@@ -48,11 +49,49 @@ function ToolLogs({ logs }: { logs: LogEntry[] }) {
   );
 }
 
+const TASK_STATUS: Record<string, string> = {
+  running: "processing", done: "success", failed: "error",
+  interrupted: "warning", recovered: "cyan",
+};
+const TASK_KIND: Record<string, string> = {
+  analyze: "素材分析", analyze_batch: "批量分析", plan_generate: "方案生成",
+  plan_revise: "方案修订", execute: "执行", render: "渲染", chat_actions: "对话动作链",
+};
+
+function TaskList() {
+  const [tasks, setTasks] = useState<BackgroundTask[]>([]);
+  useEffect(() => {
+    const load = () => api.tasks().then((r) => setTasks(r.tasks)).catch(() => {});
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <Table<BackgroundTask>
+      rowKey="id" dataSource={tasks} size="small" pagination={{ pageSize: 15 }}
+      locale={{ emptyText: <Empty description="还没有后台任务" /> }}
+      columns={[
+        { title: "#", dataIndex: "id", width: 60 },
+        { title: "类型", dataIndex: "kind", width: 110,
+          render: (k: string) => TASK_KIND[k] ?? k },
+        { title: "状态", dataIndex: "status", width: 90,
+          render: (s: string) => <Tag color={TASK_STATUS[s]}>{s}</Tag> },
+        { title: "参数", dataIndex: "payload", ellipsis: true,
+          render: (p: Record<string, unknown>) => JSON.stringify(p) },
+        { title: "备注", dataIndex: "detail", ellipsis: true },
+        { title: "更新时间", dataIndex: "updated_at", width: 170,
+          render: (t: string | null) => (t ? new Date(t).toLocaleString() : "-") },
+      ]}
+    />
+  );
+}
+
 export function LogsPanel({ events, logs }: { events: AppEvent[]; logs: LogEntry[] }) {
   return (
     <Tabs
       items={[
         { key: "events", label: "实时事件", children: <EventFeed events={events} /> },
+        { key: "tasks", label: "后台任务", children: <TaskList /> },
         { key: "tools", label: "工具调用日志", children: <ToolLogs logs={logs} /> },
       ]}
     />

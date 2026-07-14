@@ -116,6 +116,16 @@ export interface MemoryItem {
   created_at: string | null;
 }
 
+export interface BackgroundTask {
+  id: number;
+  kind: string;
+  status: string;
+  payload: Record<string, unknown>;
+  detail: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface LogEntry {
   id: number;
   task_id: string;
@@ -197,6 +207,7 @@ export const api = {
     ),
   resetOutput: (id: number) => request(`/api/plans/${id}/output`, { method: "DELETE" }),
   logs: () => request<{ logs: LogEntry[] }>("/api/logs"),
+  tasks: () => request<{ tasks: BackgroundTask[] }>("/api/tasks"),
   chat: (message: string, session_id?: string | null) =>
     request<{ session_id: string; reply: string; actions: ChatAction[] }>(
       "/api/chat",

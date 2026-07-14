@@ -190,3 +190,11 @@
 - [x] 对话：learn_style/apply_style/clear_style 意图；状态简报列已学风格
 - [x] M18 验证：pytest 3 项通过（71 passed 全量，快切 8 镜头 vs 慢 2 镜头画像差异/同名覆盖/注入断言）；真实走查：同目标同素材，快剪画像（0.9s/镜头 56切/分）→ 16 片段均 1.0s vs 舒缓画像 → 6 片段均 3.3s，节奏驱动效果显著
 - [ ] 暂缓：diff 风格符合度展示、转场使用率统计（需参考片含转场元数据，无可靠来源）；注：叠化式参考片无硬切时镜头检测不敏感（内容检测原理限制），画像会偏舒缓
+
+## M19 任务持久化（phase2-roadmap §9 工程项）
+
+- [x] BackgroundTask 表 + spawn() 统一包装（8 处 create_task 全收编）
+- [x] plans.py 生成/修订抽为 payload 驱动函数（run_generation/run_revision，恢复可重放）
+- [x] 启动恢复：running→interrupted + 按 kind 策略（分析/渲染/执行/生成重跑，不存在的对象跳过；chat 动作链标中断请用户重发）
+- [x] GET /api/tasks + 前端日志页「后台任务」表（5s 轮询）
+- [x] M19 验证：pytest 3 项通过（74 passed 全量，恢复测试走真实 lifespan 路径）；真实走查：渲染中杀服务重启，日志"恢复中断任务 1 项: 重跑渲染 #9"，续跑完成出片

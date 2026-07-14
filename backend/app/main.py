@@ -15,6 +15,7 @@ from app.api.execute import router as execute_router
 from app.api.memory import router as memory_router
 from app.api.music import router as music_router
 from app.api.plans import router as plans_router
+from app.api.tasks import router as tasks_router
 from app.capability.discovery import discover_capabilities
 from app.store.db import get_engine
 from app.tools import load_all_tools
@@ -42,6 +43,11 @@ async def lifespan(app: FastAPI):
     registry = discover_capabilities()
     app.state.capabilities = registry
     logger.info("Capability Registry:\n%s", json.dumps(registry, ensure_ascii=False, indent=2))
+    from app.runtime.tasks import recover_interrupted
+
+    recovered = await recover_interrupted()  # M19：恢复上次会话被打断的后台任务
+    if recovered:
+        logger.info("恢复中断任务 %d 项: %s", len(recovered), "；".join(recovered))
     yield
 
 
@@ -53,6 +59,7 @@ app.include_router(execute_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(music_router, prefix="/api")
+app.include_router(tasks_router, prefix="/api")
 
 
 @app.get("/api/health")

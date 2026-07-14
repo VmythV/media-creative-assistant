@@ -114,3 +114,17 @@ class MusicTrack(Base):
     duration: Mapped[float] = mapped_column()
     mean_volume: Mapped[float | None] = mapped_column(nullable=True)  # dB，volumedetect
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class BackgroundTask(Base):
+    """后台任务登记（M19 任务持久化）：重启后按 kind 恢复或标记中断。"""
+
+    __tablename__ = "background_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String)  # analyze/analyze_batch/plan_generate/plan_revise/execute/render/chat_actions
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String, default="running")  # running/done/failed/interrupted/recovered
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

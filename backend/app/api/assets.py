@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.runtime.events import bus, sse_format
 from app.runtime.pipeline import ANALYSIS_VERSION, analyze_asset
+from app.runtime.tasks import spawn
 from app.store.db import get_db
 from app.store.hashing import content_hash
 from app.store.models import AnalysisRecord, Asset
@@ -142,7 +143,7 @@ async def reanalyze_asset(asset_id: int, db: Session = Depends(get_db)) -> dict:
     db.query(AnalysisRecord).filter_by(content_hash=asset.content_hash).delete()
     asset.status = "imported"
     db.commit()
-    asyncio.create_task(analyze_asset(asset_id))
+    spawn("analyze", {"asset_id": asset_id}, analyze_asset(asset_id))
     return {"status": "started", "asset_id": asset_id}
 
 
@@ -188,19 +189,21 @@ async def trigger_analysis(asset_id: int, db: Session = Depends(get_db)) -> dict
     asset = db.get(Asset, asset_id)
     if asset is None:
         raise HTTPException(404, "素材不存在")
-    asyncio.create_task(analyze_asset(asset_id))
+    spawn("analyze", {"asset_id": asset_id}, analyze_asset(asset_id))
     return {"status": "started", "asset_id": asset_id}
+
+
+async def analyze_batch(asset_ids: list[int]) -> None:
+    """顺序批量分析（M19 任务恢复可重放：剩余未分析的继续跑）。"""
+    for aid in asset_ids:
+        await analyze_asset(aid)
 
 
 @router.post("/assets/analyze-all")
 async def trigger_analysis_all(db: Session = Depends(get_db)) -> dict:
     ids = [a.id for a in db.query(Asset).filter(Asset.status != "analyzed").all()]
-
-    async def run_all():
-        for aid in ids:
-            await analyze_asset(aid)
-
-    asyncio.create_task(run_all())
+    if ids:
+        spawn("analyze_batch", {"asset_ids": ids}, analyze_batch(ids))
     return {"status": "started", "asset_ids": ids}
 
 

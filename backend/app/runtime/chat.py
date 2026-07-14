@@ -551,5 +551,8 @@ async def handle_message(session_id: str | None, message: str) -> dict:
     routed = await route_message(session, message)
     _append(session, {"role": "assistant", "content": routed["reply"]})
     if routed["actions"]:
-        asyncio.create_task(run_actions(session["id"], routed["actions"]))
+        from app.runtime.tasks import spawn
+
+        spawn("chat_actions", {"session_id": session["id"]},
+              run_actions(session["id"], routed["actions"]))
     return {"session_id": session["id"], "reply": routed["reply"], "actions": routed["actions"]}

@@ -151,7 +151,7 @@
 | --- | --- | --- |
 | 本地模型兜底 | Ollama LLMProvider（D3 决策的"本地兜底"未兑现半边） | 断网/欠费投诉出现前 |
 | 视觉分析提速 | 并发抽帧分析 + `fast_vision` 配置（qwen3-vl-plus 2s/帧 vs qwen3.7-plus 11-15s/帧） | M17 素材规模化时一并 |
-| 任务持久化 | 后台任务落库可恢复（现 asyncio.create_task 重启即丢） | 渲染任务变长后 |
+| 任务持久化 | 后台任务落库可恢复（现 asyncio.create_task 重启即丢）。设计（M19，2026-07-14 实施）：`background_tasks` 表（kind/payload/status/detail）+ `spawn()` 统一包装所有后台任务；启动时 running→interrupted 并按 kind 恢复——analyze/analyze_batch（缓存命中近零成本）、render（确定性）、execute（新时间戳项目无副作用）、plan_generate/plan_revise（单次 LLM 调用，尊重用户原始意图）自动重跑；chat_actions 动作链上下文复杂，pending 动作标记中断由用户重发；`GET /api/tasks` 可观测 | 渲染任务变长后 |
 | MCP Server 化 | 工具组包装独立 MCP Server（定义已兼容） | 有外部 Agent 复用需求时 |
 | Workflow Integration 内嵌面板 | Web UI 嵌进 Resolve（Electron 插件 + RenderStart/Stop 回调） | 功能稳定后的产品形态升级 |
 

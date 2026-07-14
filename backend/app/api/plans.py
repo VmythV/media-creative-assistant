@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.ir.schema import IRValidationError, validate_ir
 from app.runtime.events import bus
 from app.runtime.planning import diff_plans, extract_preferences, generate_plan, revise_plan
+from app.runtime.tasks import spawn
 from app.store.db import db_session, get_db
 from app.store.models import AnalysisRecord, Asset, EditPlan
 from app.tools.media import probe_media
@@ -55,6 +56,29 @@ def get_highlights(db: Session = Depends(get_db)) -> dict:
     return {"highlights": result}
 
 
+async def run_generation(plan_id: int, goal: str, asset_ids: list[int] | None = None) -> None:
+    """方案生成核心（payload 驱动，M19 任务恢复可重放）。"""
+    bus.publish("plan", {"plan_id": plan_id, "step": "generating", "detail": goal})
+    try:
+        result = await generate_plan(goal, asset_ids)
+        with db_session() as s:
+            row = s.get(EditPlan, plan_id)
+            row.plan = result["plan"]
+            row.ir = result["ir"]
+            row.status = "draft"
+            s.commit()
+        bus.publish("plan", {"plan_id": plan_id, "step": "draft", "detail": "方案生成完成"})
+    except Exception as e:  # noqa: BLE001 - 失败落状态并上报，再抛给任务记账
+        logger.exception("方案 %s 生成失败", plan_id)
+        with db_session() as s:
+            row = s.get(EditPlan, plan_id)
+            row.status = "failed"
+            row.plan = {"error": str(e)}
+            s.commit()
+        bus.publish("plan", {"plan_id": plan_id, "step": "failed", "detail": str(e)[:300]})
+        raise
+
+
 @router.post("/plans")
 async def create_plan(req: PlanRequest, db: Session = Depends(get_db)) -> dict:
     if not req.goal.strip():
@@ -63,28 +87,8 @@ async def create_plan(req: PlanRequest, db: Session = Depends(get_db)) -> dict:
     db.add(plan_row)
     db.commit()
     plan_id = plan_row.id
-
-    async def run():
-        bus.publish("plan", {"plan_id": plan_id, "step": "generating", "detail": req.goal})
-        try:
-            result = await generate_plan(req.goal, req.asset_ids)
-            with db_session() as s:
-                row = s.get(EditPlan, plan_id)
-                row.plan = result["plan"]
-                row.ir = result["ir"]
-                row.status = "draft"
-                s.commit()
-            bus.publish("plan", {"plan_id": plan_id, "step": "draft", "detail": "方案生成完成"})
-        except Exception as e:  # noqa: BLE001 - 失败落状态并上报
-            logger.exception("方案 %s 生成失败", plan_id)
-            with db_session() as s:
-                row = s.get(EditPlan, plan_id)
-                row.status = "failed"
-                row.plan = {"error": str(e)}
-                s.commit()
-            bus.publish("plan", {"plan_id": plan_id, "step": "failed", "detail": str(e)[:300]})
-
-    asyncio.create_task(run())
+    spawn("plan_generate", {"plan_id": plan_id, "goal": req.goal, "asset_ids": req.asset_ids},
+          run_generation(plan_id, req.goal, req.asset_ids))
     return {"plan_id": plan_id, "status": "generating"}
 
 
@@ -117,9 +121,7 @@ async def revise(plan_id: int, req: ReviseRequest, db: Session = Depends(get_db)
         raise HTTPException(404, "方案不存在")
     if not base.ir or not base.plan.get("clips"):
         raise HTTPException(400, "源方案没有可修订的内容")
-    base_plan, base_goal = dict(base.plan), base.goal
-    base_plan.pop("execution", None)  # 执行/渲染结果不属于方案内容
-    base_plan.pop("render", None)
+    base_goal = base.goal
 
     new_row = EditPlan(
         goal=base_goal,
@@ -129,42 +131,54 @@ async def revise(plan_id: int, req: ReviseRequest, db: Session = Depends(get_db)
     db.add(new_row)
     db.commit()
     new_id = new_row.id
-
-    async def run():
-        bus.publish("plan", {"plan_id": new_id, "step": "generating", "detail": f"修订：{req.instruction}"})
-        try:
-            result = await revise_plan(base_plan, req.instruction, req.asset_ids)
-            diff = diff_plans(base_plan, result["plan"])
-            with db_session() as s:
-                row = s.get(EditPlan, new_id)
-                row.plan = {
-                    **result["plan"],
-                    "revised_from": plan_id,
-                    "revision_instruction": req.instruction,
-                    "diff": diff,
-                }
-                row.ir = result["ir"]
-                row.status = "draft"
-                s.commit()
-            bus.publish("plan", {"plan_id": new_id, "step": "draft", "detail": "修订方案生成完成"})
-            # 修订成功后沉淀长期偏好（设计文档 §14）；提取失败不影响主流程
-            try:
-                added = await extract_preferences(req.instruction)
-                if added:
-                    bus.publish("memory", {"step": "learned", "detail": "；".join(added)})
-            except Exception:  # noqa: BLE001
-                logger.warning("偏好提取失败（已忽略）", exc_info=True)
-        except Exception as e:  # noqa: BLE001 - 失败落状态并上报
-            logger.exception("方案 %s 修订失败", plan_id)
-            with db_session() as s:
-                row = s.get(EditPlan, new_id)
-                row.status = "failed"
-                row.plan = {**row.plan, "error": str(e)}
-                s.commit()
-            bus.publish("plan", {"plan_id": new_id, "step": "failed", "detail": str(e)[:300]})
-
-    asyncio.create_task(run())
+    spawn("plan_revise",
+          {"plan_id": new_id, "base_plan_id": plan_id, "instruction": req.instruction,
+           "asset_ids": req.asset_ids},
+          run_revision(new_id, plan_id, req.instruction, req.asset_ids))
     return {"plan_id": new_id, "revised_from": plan_id, "status": "generating"}
+
+
+async def run_revision(new_id: int, base_plan_id: int, instruction: str,
+                       asset_ids: list[int] | None = None) -> None:
+    """方案修订核心（payload 驱动，M19 任务恢复可重放）：基底方案从库重取。"""
+    bus.publish("plan", {"plan_id": new_id, "step": "generating", "detail": f"修订：{instruction}"})
+    try:
+        with db_session() as s:
+            base = s.get(EditPlan, base_plan_id)
+            if base is None or not base.plan.get("clips"):
+                raise ValueError(f"源方案 #{base_plan_id} 不存在或没有内容")
+            base_plan = {k: v for k, v in dict(base.plan).items()
+                         if k not in ("execution", "render")}
+        result = await revise_plan(base_plan, instruction, asset_ids)
+        diff = diff_plans(base_plan, result["plan"])
+        with db_session() as s:
+            row = s.get(EditPlan, new_id)
+            row.plan = {
+                **result["plan"],
+                "revised_from": base_plan_id,
+                "revision_instruction": instruction,
+                "diff": diff,
+            }
+            row.ir = result["ir"]
+            row.status = "draft"
+            s.commit()
+        bus.publish("plan", {"plan_id": new_id, "step": "draft", "detail": "修订方案生成完成"})
+        # 修订成功后沉淀长期偏好（设计文档 §14）；提取失败不影响主流程
+        try:
+            added = await extract_preferences(instruction)
+            if added:
+                bus.publish("memory", {"step": "learned", "detail": "；".join(added)})
+        except Exception:  # noqa: BLE001
+            logger.warning("偏好提取失败（已忽略）", exc_info=True)
+    except Exception as e:  # noqa: BLE001 - 失败落状态并上报，再抛给任务记账
+        logger.exception("方案 %s 修订失败", new_id)
+        with db_session() as s:
+            row = s.get(EditPlan, new_id)
+            row.status = "failed"
+            row.plan = {**row.plan, "error": str(e)}
+            s.commit()
+        bus.publish("plan", {"plan_id": new_id, "step": "failed", "detail": str(e)[:300]})
+        raise
 
 
 class MusicRequest(BaseModel):
