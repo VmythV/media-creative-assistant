@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     dashscope_api_key: str | None = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_vl_model: str = "qwen-vl-max"
+    qwen_vl_fast_model: str = "qwen3-vl-plus"  # 快速视觉模型（~2s/帧 vs 旗舰 11-15s/帧）
+    vision_speed: str = "quality"  # quality | fast（M20 性能档位）
+    vision_concurrency: int = 4  # 视觉理解并发数（DashScope 限流内）
     qwen_llm_model: str = "qwen3.7-max"
 
     # --- 本地模型 ---

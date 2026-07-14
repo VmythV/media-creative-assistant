@@ -53,7 +53,8 @@ def _dashscope_capability() -> dict:
         "name": "dashscope",
         "available": available,
         "features": ["vision", "llm"] if available else [],
-        "models": {"vision": settings.qwen_vl_model, "llm": settings.qwen_llm_model} if available else None,
+        "models": ({"vision": _effective_vision(), "llm": settings.qwen_llm_model,
+                    "vision_speed": settings.vision_speed} if available else None),
         "fallback": None if available else "请在 .env 设置 DASHSCOPE_API_KEY；缺失时无法进行视觉分析和方案生成",
     }
 
@@ -86,6 +87,12 @@ def _ollama_capability() -> dict:
         "features": ["local_llm"] if available else [],
         "fallback": None,  # 可选能力，缺失无需降级说明
     }
+
+
+def _effective_vision() -> str:
+    from app.providers.qwen import effective_vision_model
+
+    return effective_vision_model()
 
 
 def discover_capabilities() -> dict:

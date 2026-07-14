@@ -138,21 +138,12 @@ async def _analyze(asset_id: int) -> dict:
                 vision_by_shot = {int(k): v for k, v in cached_vision.items()}
                 _emit(asset_id, "vision", "视觉理解命中缓存", True)
             else:
-                targets = shots[:MAX_VISION_SHOTS]
+                targets = pick_vision_shots(shots, MAX_VISION_SHOTS)
                 mids = [round((s["start"] + s["end"]) / 2, 2) for s in targets]
                 frames_result = await asyncio.to_thread(_sample, path, mids)
-                for shot, ts in zip(targets, mids):
-                    frame = frames_result.get(ts)
-                    if frame is None:
-                        continue
-                    analysis = await registry.execute("analyze_frames", {"image_paths": [frame]})
-                    if analysis.ok:
-                        vision_by_shot[shot["index"]] = analysis.output
-                    _emit(
-                        asset_id,
-                        "vision",
-                        f"镜头 {shot['index'] + 1}/{len(targets)} 视觉理解{'完成' if analysis.ok else '失败'}",
-                    )
+                pairs = [(s, frames_result[ts]) for s, ts in zip(targets, mids)
+                         if frames_result.get(ts)]
+                vision_by_shot = await _vision_batch(asset_id, pairs)
                 if vision_by_shot:
                     _save_record(chash, "vision", {str(k): v for k, v in vision_by_shot.items()})
         else:
@@ -171,6 +162,42 @@ async def _analyze(asset_id: int) -> dict:
         _set_status(asset_id, "failed")
         _emit(asset_id, "failed", str(e)[:300])
         return {"status": "failed", "error": str(e)}
+
+
+def pick_vision_shots(shots: list[dict], limit: int) -> list[dict]:
+    """长素材防护（M20）：超过上限时沿时间轴均匀采样（含首尾），替代头部截断。"""
+    if len(shots) <= limit:
+        return shots
+    if limit == 1:
+        return [shots[0]]
+    step = (len(shots) - 1) / (limit - 1)
+    indices = sorted({round(i * step) for i in range(limit)})
+    return [shots[i] for i in indices]
+
+
+async def _vision_batch(asset_id: int, pairs: list[tuple[dict, str]]) -> dict[int, dict]:
+    """镜头视觉理解并发执行（M20）：Semaphore 限流 + 进度上报 + 耗时预估先行。"""
+    if not pairs:
+        return {}
+    concurrency = max(settings.vision_concurrency, 1)
+    per_shot = 3 if settings.vision_speed == "fast" else 13  # 实测均值（秒）
+    est = -(-len(pairs) // concurrency) * per_shot
+    _emit(asset_id, "vision",
+          f"开始视觉理解 {len(pairs)} 个镜头（并发 {concurrency}，预计 ~{est}s）")
+
+    sem = asyncio.Semaphore(concurrency)
+    progress = {"done": 0}
+
+    async def one(shot: dict, frame: str) -> tuple[int, dict | None]:
+        async with sem:
+            analysis = await registry.execute("analyze_frames", {"image_paths": [frame]})
+        progress["done"] += 1
+        _emit(asset_id, "vision",
+              f"视觉理解 {progress['done']}/{len(pairs)}{'' if analysis.ok else '（本镜头失败）'}")
+        return shot["index"], (analysis.output if analysis.ok else None)
+
+    results = await asyncio.gather(*[one(s, f) for s, f in pairs])
+    return {idx: out for idx, out in results if out is not None}
 
 
 def _sample(path: str, timestamps: list[float]) -> dict[float, str]:

@@ -50,6 +50,13 @@ class QwenLLMProvider(LLMProvider):
         }
 
 
+def effective_vision_model() -> str:
+    """速度档位生效的视觉模型（M20）：fast 走轻量模型。"""
+    if settings.vision_speed == "fast":
+        return settings.qwen_vl_fast_model
+    return settings.qwen_vl_model
+
+
 class QwenVisionProvider(VisionProvider):
     async def analyze_images(
         self,
@@ -64,7 +71,7 @@ class QwenVisionProvider(VisionProvider):
         ]
         content.append({"type": "text", "text": prompt})
         kwargs: dict = {
-            "model": settings.qwen_vl_model,
+            "model": effective_vision_model(),
             "messages": [{"role": "user", "content": content}],
             "temperature": 0.2,
         }

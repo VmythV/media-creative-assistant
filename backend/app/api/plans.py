@@ -247,17 +247,27 @@ class OutputRequest(BaseModel):
     width: int | None = None
     height: int | None = None
     fill: str = "blur"
+    quality: str = "final"  # draft / final（M20 渲染档位）
 
 
 def apply_output(plan_id: int, *, aspect: str | None = None, width: int | None = None,
-                 height: int | None = None, fill: str = "blur") -> dict:
+                 height: int | None = None, fill: str = "blur", quality: str = "final") -> dict:
     """交付规格核心（供 API 与对话执行器共用）：确定性写 IR render 字段（v0.4）。"""
     if aspect:
         if aspect not in ASPECT_PRESETS:
             raise ValueError(f"未知画幅: {aspect}（可选 {sorted(ASPECT_PRESETS)}）")
         width, height = ASPECT_PRESETS[aspect]
     if not width or not height:
-        raise ValueError("需要 aspect 预设或显式 width/height")
+        # 只改质量档位：沿用现有交付规格或时间线规格
+        with db_session() as db:
+            plan = db.get(EditPlan, plan_id)
+            if plan is None or not plan.ir:
+                raise ValueError("方案不存在或没有 Editing IR")
+            existing = plan.ir.get("render") or {}
+            res = plan.ir["project"]["resolution"]
+            width = existing.get("width") or res["width"]
+            height = existing.get("height") or res["height"]
+            fill = existing.get("fill", fill)
 
     with db_session() as db:
         plan = db.get(EditPlan, plan_id)
@@ -268,14 +278,14 @@ def apply_output(plan_id: int, *, aspect: str | None = None, width: int | None =
         ir = dict(plan.ir)
         if ir.get("version") in ("0.1", "0.2", "0.3"):  # render 规格需要 0.4
             ir["version"] = "0.4"
-        ir["render"] = {"width": width, "height": height, "fill": fill}
+        ir["render"] = {"width": width, "height": height, "fill": fill, "quality": quality}
         try:
             validate_ir(ir)
         except IRValidationError as e:
             raise ValueError(f"交付规格校验失败: {e}") from e
         plan.ir = ir
         db.commit()
-    return {"width": width, "height": height, "fill": fill}
+    return {"width": width, "height": height, "fill": fill, "quality": quality}
 
 
 @router.put("/plans/{plan_id}/output")
@@ -285,7 +295,7 @@ def set_output(plan_id: int, req: OutputRequest, db: Session = Depends(get_db)) 
         raise HTTPException(404, "方案不存在")
     try:
         spec = apply_output(plan_id, aspect=req.aspect, width=req.width,
-                            height=req.height, fill=req.fill)
+                            height=req.height, fill=req.fill, quality=req.quality)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     return {"plan_id": plan_id, "render": spec}

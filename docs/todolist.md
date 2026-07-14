@@ -198,3 +198,12 @@
 - [x] 启动恢复：running→interrupted + 按 kind 策略（分析/渲染/执行/生成重跑，不存在的对象跳过；chat 动作链标中断请用户重发）
 - [x] GET /api/tasks + 前端日志页「后台任务」表（5s 轮询）
 - [x] M19 验证：pytest 3 项通过（74 passed 全量，恢复测试走真实 lifespan 路径）；真实走查：渲染中杀服务重启，日志"恢复中断任务 1 项: 重跑渲染 #9"，续跑完成出片
+
+## M20(a) 实战性能与规模防护（真实素材验收前置）
+
+- [x] 视觉分析并发化（VISION_CONCURRENCY 默认 4，进度计数上报，开始前给耗时预估）
+- [x] 快速视觉模式：VISION_SPEED=fast 切 qwen3-vl-plus（.env 可配，capability 显示生效模型与档位）
+- [x] 长素材防护：视觉镜头改均匀采样（含首尾），替代头部截断
+- [x] 渲染速度档位：RenderSpec.quality（draft=veryfast/crf23，final=medium/crf18），API/对话 set_output_spec 可设（"快速出个样片"）
+- [x] M20(a) 验证：pytest 5 项通过（79 passed 全量，含并发计时断言）；真实 6 镜头素材实测：并发 4 → 58s vs 串行 89s（视觉部分 ~26s vs ~78s，镜头越多收益越大）
+- [ ] M20(b) 真实素材验收：待用户提供真实拍摄视频目录，从零走全链路记录摩擦点

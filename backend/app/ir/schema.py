@@ -144,6 +144,7 @@ class RenderSpec(BaseModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     fill: Literal["pad", "crop", "blur"] = "blur"
+    quality: Literal["draft", "final"] = "final"  # M20：draft 快速出样片
 
     @model_validator(mode="after")
     def check_even(self) -> "RenderSpec":

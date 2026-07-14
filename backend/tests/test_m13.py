@@ -100,7 +100,7 @@ async def test_output_api_and_chat_intent(analyzed_asset):
 
         # API 直设
         resp = client.put(f"/api/plans/{plan_id}/output", json={"aspect": "1:1"})
-        assert resp.json()["render"] == {"width": 1080, "height": 1080, "fill": "blur"}
+        assert resp.json()["render"] == {"width": 1080, "height": 1080, "fill": "blur", "quality": "final"}
         ir = client.get(f"/api/plans/{plan_id}").json()["ir"]
         assert ir["version"] not in ("0.1", "0.2", "0.3") and ir["render"]["width"] == 1080
         # 非法画幅

@@ -67,6 +67,13 @@ def _effective_spec(ir: EditingIR) -> tuple[int, int, str]:
     return ir.project.resolution.width, ir.project.resolution.height, "pad"
 
 
+def _encode_args(ir: EditingIR) -> list[str]:
+    """编码档位（M20）：draft 快速出样片，final 交付质量。"""
+    if ir.render is not None and ir.render.quality == "draft":
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
+
+
 def _compose_graph(w: int, h: int, fill: str, fps: float) -> str:
     """单片段归一化滤镜图：目标画幅 + 构图策略（设计文档 phase2 §2）。"""
     if fill == "crop":
@@ -178,7 +185,7 @@ def render_video(
         else:
             cmd += ["-f", "lavfi", "-t", str(dur), "-i", "anullsrc=r=48000:cl=stereo",
                     "-filter_complex", graph, "-map", "[vout]", "-map", "1:a:0"]
-        cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        cmd += [*_encode_args(ir),
                 "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(seg)]
         _run(cmd)
         seg_paths.append(seg)
@@ -219,7 +226,7 @@ def render_video(
                 out_len += durs[i]
             vprev, aprev = vlab, alab
         cmd += ["-filter_complex", ";".join(chains), "-map", vprev, "-map", aprev,
-                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                *_encode_args(ir),
                 "-c:a", "aac", "-ar", "48000", "-ac", "2", str(merged)]
         _run(cmd)
         n_trans = sum(1 for t in transitions[1:] if t)
@@ -264,7 +271,7 @@ def render_video(
             chains.append(f"[{prev}][{i}:v]overlay=enable='between(t,{start},{end})'[{label}]")
             prev = label
         cmd += ["-filter_complex", ";".join(chains), "-map", "[vout]", "-map", "0:a",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                *_encode_args(ir),
                 "-c:a", "copy", str(out_path)]
         _run(cmd)
         subtitles_burned = True
