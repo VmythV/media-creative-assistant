@@ -240,7 +240,16 @@ def _preferences_block() -> str:
     return f"\n\n用户长期创作偏好（历史沉淀，若与本次目标冲突以目标为准）：\n{lines}"
 
 
-async def generate_plan(goal: str, asset_ids: list[int] | None = None) -> dict:
+def _style_block(style_text: str | None) -> str:
+    """风格画像 → system prompt 附加段（M18）：片段时长与切换节奏向画像靠拢。"""
+    if not style_text:
+        return ""
+    return (f"\n\n参考风格画像（片段时长与切换节奏尽量向其靠拢，与用户目标冲突时以目标为准）：\n"
+            f"{style_text}")
+
+
+async def generate_plan(goal: str, asset_ids: list[int] | None = None,
+                        style_text: str | None = None) -> dict:
     """生成剪辑方案与 IR。返回 {"plan": ..., "ir": ...}；失败抛异常。"""
     analyzed = _load_analyzed_assets(asset_ids)
     if not analyzed:
@@ -252,7 +261,8 @@ async def generate_plan(goal: str, asset_ids: list[int] | None = None) -> dict:
     if filtered:
         brief = f"（素材库共 {total} 个，已按创作目标筛选出 {len(analyzed)} 个最相关）\n{brief}"
     messages = [
-        {"role": "system", "content": PLAN_SYSTEM_PROMPT + _preferences_block()},
+        {"role": "system",
+         "content": PLAN_SYSTEM_PROMPT + _preferences_block() + _style_block(style_text)},
         {"role": "user", "content": f"创作目标：{goal}\n\n可用素材：\n{brief}"},
     ]
     return await _plan_llm_loop(messages, analyzed, fallback_name=goal[:40])
@@ -263,7 +273,8 @@ REVISE_RULE = """
 只按指令修改，指令未提及的片段、顺序、字幕保持原样；输出修订后的完整方案 JSON（同上格式）。"""
 
 
-async def revise_plan(base_plan: dict, instruction: str, asset_ids: list[int] | None = None) -> dict:
+async def revise_plan(base_plan: dict, instruction: str, asset_ids: list[int] | None = None,
+                      style_text: str | None = None) -> dict:
     """按自然语言指令修订已有方案（设计文档 §10）。返回 {"plan": ..., "ir": ...}。"""
     analyzed = _load_analyzed_assets(asset_ids)
     if not analyzed:
@@ -279,7 +290,8 @@ async def revise_plan(base_plan: dict, instruction: str, asset_ids: list[int] | 
     analyzed = sorted(selected, key=lambda it: it["asset"].id)
     brief = _build_material_brief(analyzed)
     messages = [
-        {"role": "system", "content": PLAN_SYSTEM_PROMPT + REVISE_RULE + _preferences_block()},
+        {"role": "system",
+         "content": PLAN_SYSTEM_PROMPT + REVISE_RULE + _preferences_block() + _style_block(style_text)},
         {
             "role": "user",
             "content": (

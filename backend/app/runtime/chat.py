@@ -58,6 +58,15 @@ class VoiceoverParams(BaseModel):
     voice: str = "Female 1"
 
 
+class LearnStyleParams(BaseModel):
+    path: str
+    name: str | None = None
+
+
+class StyleRefParams(BaseModel):
+    name: str | None = None
+
+
 class ImportParams(BaseModel):
     directory: str
 
@@ -94,6 +103,9 @@ INTENT_PARAMS: dict[str, type[BaseModel]] = {
     "analyze_assets": PlanRefParams,  # 无参，占位复用
     "set_output_spec": OutputParams,
     "set_subtitle_style": SubtitleStyleParams,
+    "learn_style": LearnStyleParams,
+    "apply_style": StyleRefParams,
+    "clear_style": StyleRefParams,
 }
 
 CHAT_SYSTEM_PROMPT = """你是 AI 视频剪辑副驾驶的调度员。根据用户消息和当前系统状态，产出给用户的回应与要执行的动作序列。
@@ -108,6 +120,8 @@ CHAT_SYSTEM_PROMPT = """你是 AI 视频剪辑副驾驶的调度员。根据用�
 - remove_music {"plan_id"?}：移除配乐
 - render {"plan_id"?, "engine"?: "ffmpeg|resolve"}：渲染 mp4 成片（draft 自动先确认）。默认 ffmpeg（含字幕烧录）；用户要"高质量/用 Resolve 渲染"时 engine=resolve（走 Resolve 渲染队列，含时间线转场配乐，但不含字幕）
 - generate_voiceover {"text": 配音文本(≤350字), "voice"?: 音色}：AI 配音生成音频素材（需 Resolve Studio 已装 AI Speech Generator）
+- learn_style {"path": 参考视频绝对路径, "name"?: 风格名}：学习参考视频的剪辑节奏（学完自动应用到本会话）
+- apply_style {"name": 已学风格名}：应用某个风格画像（"照XX的感觉剪"）；clear_style {} 取消应用
 - execute {"plan_id"?}：生成 DaVinci Resolve 时间线（含转场与配乐入轨）
 - import_assets {"directory": 素材目录绝对路径}：导入素材（视频/照片）
 - analyze_assets {}：分析全部待分析素材
@@ -154,6 +168,11 @@ def _state_brief() -> str:
     tracks = [f.name for f in music_dir.glob("*") if f.suffix.lower() in AUDIO_EXTS] \
         if music_dir.is_dir() else []
     lines.append(f"音乐目录：{len(tracks)} 个文件" + (f"（{', '.join(tracks[:5])}）" if tracks else ""))
+    from app.runtime.style import list_styles
+
+    names = [s["content"].split("」")[0].split("「")[-1] for s in list_styles()]
+    if names:
+        lines.append(f"已学风格画像：{'、'.join(names[:8])}")
     return "\n".join(lines)
 
 
@@ -249,6 +268,16 @@ async def _pick_music(session: dict, params: dict, plan_id: int) -> tuple[str, s
     return reco["path"], reco["reason"]
 
 
+def _session_style(session: dict) -> str | None:
+    """会话激活的风格画像文本（M18）。"""
+    name = session["context"].get("style")
+    if not name:
+        return None
+    from app.runtime.style import find_style
+
+    return find_style(name)
+
+
 async def _act_create_plan(session: dict, params: dict) -> dict:
     with db_session() as db:
         row = EditPlan(goal=params["goal"], plan={}, status="generating")
@@ -256,7 +285,7 @@ async def _act_create_plan(session: dict, params: dict) -> dict:
         db.commit()
         plan_id = row.id
     try:
-        result = await generate_plan(params["goal"])
+        result = await generate_plan(params["goal"], style_text=_session_style(session))
     except Exception:
         with db_session() as db:
             row = db.get(EditPlan, plan_id)
@@ -285,7 +314,8 @@ async def _act_revise_plan(session: dict, params: dict) -> dict:
         db.commit()
         new_id = new_row.id
     try:
-        result = await revise_plan(base_plan, params["instruction"])
+        result = await revise_plan(base_plan, params["instruction"],
+                                   style_text=_session_style(session))
     except Exception:
         with db_session() as db:
             row = db.get(EditPlan, new_id)
@@ -436,6 +466,35 @@ async def _act_set_subtitle_style(session: dict, params: dict) -> dict:
             "color": style["color"]}
 
 
+async def _act_learn_style(session: dict, params: dict) -> dict:
+    from app.runtime.style import learn_style
+
+    profile = await asyncio.to_thread(learn_style, params["path"], params.get("name"))
+    session["context"]["style"] = profile["name"]  # 学完自动应用到本会话
+    return {"name": profile["name"], "pace": profile["pace"],
+            "avg_shot": profile["avg_shot"], "cuts_per_min": profile["cuts_per_min"],
+            "applied": True}
+
+
+async def _act_apply_style(session: dict, params: dict) -> dict:
+    from app.runtime.style import find_style, list_styles
+
+    name = params.get("name")
+    if not name:
+        raise ValueError("需要风格名；已学风格：" +
+                         ("、".join(s["content"].split("」")[0].split("「")[-1]
+                                    for s in list_styles()) or "（无）"))
+    if find_style(name) is None:
+        raise ValueError(f"没有名为「{name}」的风格画像，先用 learn_style 学习参考视频")
+    session["context"]["style"] = name
+    return {"applied": name}
+
+
+async def _act_clear_style(session: dict, params: dict) -> dict:
+    session["context"].pop("style", None)
+    return {"applied": None}
+
+
 ACTION_IMPL = {
     "create_plan": _act_create_plan,
     "revise_plan": _act_revise_plan,
@@ -449,6 +508,9 @@ ACTION_IMPL = {
     "set_output_spec": _act_set_output,
     "set_subtitle_style": _act_set_subtitle_style,
     "generate_voiceover": _act_generate_voiceover,
+    "learn_style": _act_learn_style,
+    "apply_style": _act_apply_style,
+    "clear_style": _act_clear_style,
 }
 
 

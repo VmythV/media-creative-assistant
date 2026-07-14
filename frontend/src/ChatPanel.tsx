@@ -7,6 +7,7 @@ const INTENT_LABEL: Record<string, string> = {
   set_music: "设置配乐", remove_music: "移除配乐", render: "渲染成片",
   execute: "生成 Resolve 时间线", import_assets: "导入素材", analyze_assets: "分析素材",
   set_output_spec: "切换输出画幅", set_subtitle_style: "字幕样式", generate_voiceover: "AI 配音",
+  learn_style: "学习风格", apply_style: "应用风格", clear_style: "取消风格",
 };
 const STATUS_META: Record<string, { color: string; text: string }> = {
   pending: { color: "processing", text: "执行中" },
