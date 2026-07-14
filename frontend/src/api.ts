@@ -88,6 +88,14 @@ export interface RenderResult {
   error?: string;
 }
 
+export interface MemoryItem {
+  id: number;
+  kind: string;
+  content: string;
+  source: string;
+  created_at: string | null;
+}
+
 export interface LogEntry {
   id: number;
   task_id: string;
@@ -147,4 +155,8 @@ export const api = {
     }),
   removeMusic: (id: number) => request(`/api/plans/${id}/music`, { method: "DELETE" }),
   logs: () => request<{ logs: LogEntry[] }>("/api/logs"),
+  memories: () => request<{ memories: MemoryItem[] }>("/api/memory"),
+  addMemory: (content: string) =>
+    request<MemoryItem>("/api/memory", { method: "POST", body: JSON.stringify({ content }) }),
+  deleteMemory: (id: number) => request(`/api/memory/${id}`, { method: "DELETE" }),
 };

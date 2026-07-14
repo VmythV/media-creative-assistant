@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.assets import router as assets_router
 from app.api.capabilities import router as capabilities_router
 from app.api.execute import router as execute_router
+from app.api.memory import router as memory_router
 from app.api.plans import router as plans_router
 from app.capability.discovery import discover_capabilities
 from app.store.db import get_engine
@@ -47,6 +48,7 @@ app.include_router(capabilities_router, prefix="/api")
 app.include_router(assets_router, prefix="/api")
 app.include_router(plans_router, prefix="/api")
 app.include_router(execute_router, prefix="/api")
+app.include_router(memory_router, prefix="/api")
 
 
 @app.get("/api/health")

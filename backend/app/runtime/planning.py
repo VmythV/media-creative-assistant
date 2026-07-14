@@ -8,6 +8,7 @@ import json
 import logging
 
 from app.ir.schema import IR_VERSION, TRANSITION_TYPES, IRValidationError, validate_ir
+from app.memory import get_memory_provider
 from app.providers import get_llm_provider
 from app.store.db import db_session
 from app.store.models import AnalysisRecord, Asset
@@ -201,6 +202,15 @@ async def _plan_llm_loop(messages: list[dict], analyzed: list[dict], fallback_na
     raise IRValidationError(last_error or ["方案生成失败"])
 
 
+def _preferences_block() -> str:
+    """用户长期偏好 → system prompt 附加段；无记忆返回空串（设计文档 §14）。"""
+    prefs = get_memory_provider().texts("user")
+    if not prefs:
+        return ""
+    lines = "\n".join(f"- {p}" for p in prefs)
+    return f"\n\n用户长期创作偏好（历史沉淀，若与本次目标冲突以目标为准）：\n{lines}"
+
+
 async def generate_plan(goal: str, asset_ids: list[int] | None = None) -> dict:
     """生成剪辑方案与 IR。返回 {"plan": ..., "ir": ...}；失败抛异常。"""
     analyzed = _load_analyzed_assets(asset_ids)
@@ -209,7 +219,7 @@ async def generate_plan(goal: str, asset_ids: list[int] | None = None) -> dict:
 
     brief = _build_material_brief(analyzed)
     messages = [
-        {"role": "system", "content": PLAN_SYSTEM_PROMPT},
+        {"role": "system", "content": PLAN_SYSTEM_PROMPT + _preferences_block()},
         {"role": "user", "content": f"创作目标：{goal}\n\n可用素材：\n{brief}"},
     ]
     return await _plan_llm_loop(messages, analyzed, fallback_name=goal[:40])
@@ -228,7 +238,7 @@ async def revise_plan(base_plan: dict, instruction: str, asset_ids: list[int] | 
 
     brief = _build_material_brief(analyzed)
     messages = [
-        {"role": "system", "content": PLAN_SYSTEM_PROMPT + REVISE_RULE},
+        {"role": "system", "content": PLAN_SYSTEM_PROMPT + REVISE_RULE + _preferences_block()},
         {
             "role": "user",
             "content": (
@@ -239,6 +249,38 @@ async def revise_plan(base_plan: dict, instruction: str, asset_ids: list[int] | 
     ]
     fallback = base_plan.get("title") or "修订方案"
     return await _plan_llm_loop(messages, analyzed, fallback_name=fallback)
+
+
+EXTRACT_SYSTEM_PROMPT = """你从视频剪辑软件用户的修订指令中提取**长期创作偏好**——对用户未来所有项目都适用的稳定倾向。
+
+判定规则：
+1. 只提取跨项目可复用的偏好（如"字幕偏文艺""节奏偏快""不喜欢电子乐""转场要克制"）。
+2. 一次性操作指令（如"这条压到20秒""删掉第2段""结尾字幕改成XX"）绝不是偏好，必须忽略。
+3. 拿不准就不提取。最多 3 条，每条不超过 30 字，用陈述句概括成通用规则。
+4. 只输出 JSON：{"preferences": ["...", ...]}；没有可提取的偏好时输出 {"preferences": []}。"""
+
+
+async def extract_preferences(instruction: str) -> list[str]:
+    """修订指令 → 持久偏好（受限格式 + 确定性去重写入）。返回本次新增的偏好。"""
+    llm = get_llm_provider()
+    resp = await llm.chat(
+        [
+            {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
+            {"role": "user", "content": f"修订指令：{instruction}"},
+        ],
+        json_mode=True,
+        temperature=0.0,
+    )
+    try:
+        prefs = json.loads(resp["content"]).get("preferences") or []
+    except (json.JSONDecodeError, AttributeError):
+        return []
+    memory = get_memory_provider()
+    added = []
+    for p in prefs[:3]:
+        if isinstance(p, str) and p.strip() and memory.add("user", p.strip()[:60], source="revision"):
+            added.append(p.strip()[:60])
+    return added
 
 
 def _clip_desc(c: dict) -> str:

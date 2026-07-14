@@ -89,3 +89,15 @@ class EditPlan(Base):
     ir: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String, default="draft")  # draft/confirmed/executed/failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class MemoryItem(Base):
+    """记忆条目（M11 起使用）：kind 枚举见 app.memory.MEMORY_KINDS，当前实现 user。"""
+
+    __tablename__ = "memory_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String, default="user")  # user/project/temporary/global/business
+    content: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String, default="manual")  # revision/manual
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

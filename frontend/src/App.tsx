@@ -6,6 +6,7 @@ import {
 import { AssetsPanel } from "./AssetsPanel";
 import { HighlightsPanel } from "./HighlightsPanel";
 import { LogsPanel } from "./LogsPanel";
+import { MemoryPanel } from "./MemoryPanel";
 import { PlanPanel } from "./PlanPanel";
 import { useEvents } from "./useEvents";
 
@@ -88,6 +89,7 @@ export default function App() {
               label: `剪辑方案（${plans.length}）`,
               children: <PlanPanel plans={plans} assets={assets} refresh={refresh} />,
             },
+            { key: "memory", label: "偏好记忆", children: <MemoryPanel /> },
             { key: "logs", label: "日志", children: <LogsPanel events={events} logs={logs} /> },
           ]}
         />

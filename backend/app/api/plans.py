@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.ir.schema import IRValidationError, validate_ir
 from app.runtime.events import bus
-from app.runtime.planning import diff_plans, generate_plan, revise_plan
+from app.runtime.planning import diff_plans, extract_preferences, generate_plan, revise_plan
 from app.store.db import db_session, get_db
 from app.store.models import AnalysisRecord, Asset, EditPlan
 from app.tools.media import probe_media
@@ -147,6 +147,13 @@ async def revise(plan_id: int, req: ReviseRequest, db: Session = Depends(get_db)
                 row.status = "draft"
                 s.commit()
             bus.publish("plan", {"plan_id": new_id, "step": "draft", "detail": "修订方案生成完成"})
+            # 修订成功后沉淀长期偏好（设计文档 §14）；提取失败不影响主流程
+            try:
+                added = await extract_preferences(req.instruction)
+                if added:
+                    bus.publish("memory", {"step": "learned", "detail": "；".join(added)})
+            except Exception:  # noqa: BLE001
+                logger.warning("偏好提取失败（已忽略）", exc_info=True)
         except Exception as e:  # noqa: BLE001 - 失败落状态并上报
             logger.exception("方案 %s 修订失败", plan_id)
             with db_session() as s:

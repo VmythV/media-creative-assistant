@@ -115,3 +115,11 @@
 - [x] 前端：执行结果卡转场/配乐状态展示
 - [x] M10 验证：pytest 3 项通过（43 passed 全量）；真实方案（6 片段 5 转场 + 配乐）执行后 Resolve 时间线 525 帧 = IR 21.0s，V1 轨 5 处交叉叠化位置/时长与 IR 一致，配乐入 A2 轨铺满（脚本核实）
 - [x] 转场类型精确映射（M10 补强）：逐名探测 24 候选得出 FCPX 效果名词汇表（4 种可达类型，参数不被识别），10 种 IR 类型按语义映射；端到端验证 fade/fadewhite/wipeleft/circleclose → 交叉叠化/浸入颜色叠化/边缘划像/椭圆展开 全部正确（44 passed 全量）
+
+## M11 User Memory（设计文档 §14）
+
+- [x] MemoryProvider 接口 + SQLite 实现（memory_items 表，kind 枚举，归一化去重）
+- [x] 偏好提取：修订成功后 LLM 受限格式提取持久偏好（一次性指令返回空），确定性写入
+- [x] 注入：generate_plan/revise_plan system prompt 附加用户偏好
+- [x] API：GET/POST/DELETE /api/memory；前端「偏好记忆」页签
+- [x] M11 验证：pytest 5 项通过（49 passed 全量）；真实修订指令沉淀 2 条偏好（转场克制/字幕含蓄，一次性指令被正确忽略），下一次生成明显遵循（转场全叠化、字幕无感叹号留白风格）
