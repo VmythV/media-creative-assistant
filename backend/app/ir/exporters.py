@@ -57,15 +57,17 @@ def export_edit_list(ir: EditingIR) -> str:
         for i, clip in enumerate(track.items, start=1):
             src = src_map.get(clip.source_id)
             clip_len = clip.trim.end - clip.trim.start
+            t_in = clip.transition.duration if clip.transition else 0.0
+            trans = f"（{clip.transition.type} {t_in:.1f}s 转场进入）" if clip.transition else ""
             lines.append(
                 f"{i}. **[{ROLE_LABELS.get(clip.role, clip.role)}]** "
                 f"{Path(src.path).name if src else clip.source_id} "
                 f"[{clip.trim.start:.1f}s → {clip.trim.end:.1f}s]（{clip_len:.1f}s，"
-                f"时间线 {pos:.1f}s 起）"
+                f"时间线 {pos:.1f}s 起）{trans}"
             )
             if clip.reason:
                 lines.append(f"   - 理由：{clip.reason}")
-            pos += clip_len
+            pos += clip_len - t_in  # 转场消耗重叠，时间线位置按独占长度推进
 
     subtitles = [(t, s) for t in ir.tracks if isinstance(t, SubtitleTrack) for s in t.items]
     if subtitles:
@@ -104,20 +106,32 @@ def export_fcpxml(ir: EditingIR) -> str:
     sequence = ET.SubElement(project, "sequence", format="r0")
     spine = ET.SubElement(sequence, "spine")
 
+    # 转场用居中对齐映射（设计文档 §13）：转入侧媒体入点 +t/2、spine 时长 −t/2，
+    # 转出侧 spine 时长再 −t/2；两侧 handle 恰好消耗 IR trim 范围，总长 = Σ片段 − Σ转场。
     src_rid = {s.id: f"r{i}" for i, s in enumerate(ir.sources, start=1)}
     pos = 0.0
     for track in ir.tracks:
         if not isinstance(track, VideoTrack):
             continue
-        for clip in track.items:
+        for i, clip in enumerate(track.items):
             clip_len = clip.trim.end - clip.trim.start
+            t_in = clip.transition.duration if (clip.transition and i > 0) else 0.0
+            nxt = track.items[i + 1] if i + 1 < len(track.items) else None
+            t_out = nxt.transition.duration if nxt and nxt.transition else 0.0
+            if t_in:
+                # Resolve 对 FCPXML 转场效果名的识别未文档化，统一映射 Cross Dissolve（实测可导入）
+                ET.SubElement(
+                    spine, "transition", name="Cross Dissolve",
+                    offset=_rational(pos - t_in / 2, fps), duration=_rational(t_in, fps),
+                )
             ET.SubElement(
                 spine, "asset-clip",
                 ref=src_rid[clip.source_id], name=clip.role,
-                offset=_rational(pos, fps), start=_rational(clip.trim.start, fps),
-                duration=_rational(clip_len, fps),
+                offset=_rational(pos, fps),
+                start=_rational(clip.trim.start + t_in / 2, fps),
+                duration=_rational(clip_len - t_in / 2 - t_out / 2, fps),
             )
-            pos += clip_len
+            pos += clip_len - t_in / 2 - t_out / 2
 
     ET.indent(root)
     return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n' + ET.tostring(

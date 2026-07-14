@@ -194,9 +194,21 @@ function ExecutionCard({ plan }: { plan: Plan }) {
                 SRT 已导入媒体池，在 Resolve 中右键 → Insert Selected Subtitles to Timeline
               </Descriptions.Item>
             )}
+            {exec.resolve.transitions?.method === "fcpxml_import" && (
+              <Descriptions.Item label="转场">
+                {exec.resolve.transitions.count} 处转场已随时间线导入（统一为交叉叠化；精确类型见渲染成片）
+              </Descriptions.Item>
+            )}
             {exec.resolve.transitions?.method === "unsupported" && (
               <Descriptions.Item label="转场">
                 {exec.resolve.transitions.count} 处转场需在 Resolve 内手动添加（脚本 API 限制）；渲染成片含完整转场
+              </Descriptions.Item>
+            )}
+            {exec.resolve.music && (
+              <Descriptions.Item label="配乐">
+                {exec.resolve.music.method === "timeline"
+                  ? `${exec.resolve.music.file} 已放置到 A${exec.resolve.music.track} 轨（音量/淡入淡出请在 Resolve 中调整）`
+                  : `${exec.resolve.music.file} 已入媒体池，拖到音频轨即可`}
               </Descriptions.Item>
             )}
           </Descriptions>

@@ -106,3 +106,11 @@
 - [x] Planning 提示词：transition 字段 + 节奏选型指引；diff_plans 转场变化检测
 - [x] Resolve adapter：转场不支持提示（summary 记录）；前端片段列表转场标记
 - [x] M9 验证：pytest 5 项通过（40 passed 全量）；真实方案（qwen3.7-max）自主为 6 片段选 5 处转场（fade/dissolve），成片 21.1s = Σ片段 24s − 转场重叠 3s，抽帧确认 fade/dissolve 混合中间态与字幕沿用规则
+
+## M10 Resolve 时间线带转场与配乐（设计文档 §13）
+
+- [x] export_fcpxml：转场元素（居中对齐数学：媒体入点/spine 时长偏移 t/2）；无转场输出保持不变
+- [x] Resolve adapter：含转场走 ImportTimelineFromFile(FCPXML) 路径；无转场保持 AppendToTimeline
+- [x] Resolve adapter：配乐 AppendToTimeline(mediaType=2, recordFrame) 入新增音频轨（截齐时间线，失败降级媒体池）
+- [x] 前端：执行结果卡转场/配乐状态展示
+- [x] M10 验证：pytest 3 项通过（43 passed 全量）；真实方案（6 片段 5 转场 + 配乐）执行后 Resolve 时间线 525 帧 = IR 21.0s，V1 轨 5 处交叉叠化位置/时长与 IR 一致，配乐入 A2 轨铺满（脚本核实）

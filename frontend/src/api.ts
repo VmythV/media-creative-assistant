@@ -64,6 +64,7 @@ export interface ExecutionResult {
     project: string; timeline: string; clips: number;
     subtitles: Record<string, unknown>;
     transitions?: { count: number; method: string } | null;
+    music?: { file: string; method: string; track?: number } | null;
   };
   artifacts: Record<string, string>;
 }

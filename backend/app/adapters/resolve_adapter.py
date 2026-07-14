@@ -10,8 +10,8 @@ import time
 from pathlib import Path
 
 from app.config import settings
-from app.ir.exporters import export_srt
-from app.ir.schema import AudioTrack, EditingIR, VideoTrack
+from app.ir.exporters import export_fcpxml, export_srt
+from app.ir.schema import AudioTrack, EditingIR, VideoTrack, timeline_duration
 
 logger = logging.getLogger("mca.resolve")
 
@@ -69,6 +69,34 @@ def execute_ir(ir: EditingIR, *, progress=None) -> dict:
     project.SetSetting("timelineResolutionHeight", str(ir.project.resolution.height))
 
     media_pool = project.GetMediaPool()
+    clips = [c for t in ir.tracks if isinstance(t, VideoTrack) for c in t.items]
+    n_transitions = sum(1 for c in clips if c.transition)
+
+    # 含转场走 FCPXML 导入路径（AppendToTimeline 无法插转场，设计文档 §13）
+    if n_transitions:
+        timeline = _build_timeline_fcpxml(media_pool, ir, report)
+        transitions_result = {"count": n_transitions, "method": "fcpxml_import"}
+    else:
+        timeline = _build_timeline_append(media_pool, ir, fps, report)
+        transitions_result = None
+    project.SetCurrentTimeline(timeline)
+
+    subtitle_result = _add_subtitles(media_pool, timeline, ir, report)
+    music_result = _place_music(media_pool, timeline, ir, report)
+
+    pm.SaveProject()
+    return {
+        "project": project_name,
+        "timeline": ir.project.name,
+        "clips": len(clips),
+        "subtitles": subtitle_result,
+        "music": music_result,
+        "transitions": transitions_result,
+    }
+
+
+def _build_timeline_append(media_pool, ir: EditingIR, fps: float, report):
+    """无转场路径：素材入池 + AppendToTimeline 逐片段 trim。"""
     paths = [s.path for s in ir.sources]
     items = media_pool.ImportMedia(paths)
     if not items:
@@ -105,35 +133,60 @@ def execute_ir(ir: EditingIR, *, progress=None) -> dict:
     if not appended:
         raise ResolveAdapterError("片段添加到时间线失败")
     report("timeline", f"时间线 {ir.project.name}：{len(clip_infos)} 个片段")
+    return timeline
 
-    subtitle_result = _add_subtitles(media_pool, timeline, ir, report)
 
-    # 配乐已随 sources 一并入媒体池（脚本 API 无法可靠定位音频到时间线，用户拖入 A1 即可）
-    music = next((m for t in ir.tracks if isinstance(t, AudioTrack) for m in t.items), None)
-    music_result = None
-    if music is not None:
-        src = next(s for s in ir.sources if s.id == music.source_id)
-        music_result = {"file": Path(src.path).name, "method": "media_pool"}
-        report("music", f"配乐 {music_result['file']} 已入媒体池，拖到 A1 轨即可")
+def _build_timeline_fcpxml(media_pool, ir: EditingIR, report):
+    """转场路径：生成含 <transition> 的 FCPXML 1.9 → ImportTimelineFromFile。
 
-    # 转场：脚本 API 无公开接口在片段间插入转场，时间线为硬切（设计文档 §12）
-    transitions_result = None
-    n_transitions = sum(
-        1 for t in ir.tracks if isinstance(t, VideoTrack) for c in t.items if c.transition
+    素材随导入按 media-rep 路径自动入媒体池；转场类型统一映射 Cross Dissolve
+    （Resolve 对 FCPXML 效果名识别未文档化），精确类型体现在渲染成片。
+    """
+    fcpxml_path = settings.data_dir / "output" / f"{ir.project.name}.timeline.fcpxml"
+    fcpxml_path.parent.mkdir(parents=True, exist_ok=True)
+    fcpxml_path.write_text(export_fcpxml(ir), encoding="utf-8")
+
+    timeline = media_pool.ImportTimelineFromFile(
+        str(fcpxml_path), {"timelineName": ir.project.name}
     )
-    if n_transitions:
-        transitions_result = {"count": n_transitions, "method": "unsupported"}
-        report("transitions", f"{n_transitions} 处转场需在 Resolve 内手动添加（脚本 API 限制）")
+    if timeline is None:
+        raise ResolveAdapterError(f"FCPXML 时间线导入失败: {fcpxml_path}")
+    report("timeline", f"时间线 {timeline.GetName()}（FCPXML 导入，含转场）")
+    return timeline
 
-    pm.SaveProject()
-    return {
-        "project": project_name,
-        "timeline": ir.project.name,
-        "clips": len(clip_infos),
-        "subtitles": subtitle_result,
-        "music": music_result,
-        "transitions": transitions_result,
-    }
+
+def _place_music(media_pool, timeline, ir: EditingIR, report) -> dict | None:
+    """配乐直接放到新增音频轨（AppendToTimeline mediaType=2 + recordFrame，实测可行）。
+
+    片段音量/淡入淡出为脚本 API 空白，响度处理仍在渲染侧；失败降级为仅入媒体池。
+    """
+    music = next((m for t in ir.tracks if isinstance(t, AudioTrack) for m in t.items), None)
+    if music is None:
+        return None
+    src = next(s for s in ir.sources if s.id == music.source_id)
+    filename = Path(src.path).name
+    try:
+        items = media_pool.ImportMedia([src.path])
+        if not items:
+            raise ResolveAdapterError(f"配乐导入媒体池失败: {src.path}")
+        # 新增独立音频轨，避免与视频片段联动音轨重叠
+        timeline.AddTrack("audio", "stereo")
+        track_index = timeline.GetTrackCount("audio")
+        fps = ir.project.fps
+        end_frame = max(round(min(timeline_duration(ir), src.duration) * fps) - 1, 0)
+        appended = media_pool.AppendToTimeline([{
+            "mediaPoolItem": items[0], "startFrame": 0, "endFrame": end_frame,
+            "mediaType": 2, "trackIndex": track_index,
+            "recordFrame": timeline.GetStartFrame(),
+        }])
+        if not appended:
+            raise ResolveAdapterError("配乐 AppendToTimeline 失败")
+        report("music", f"配乐 {filename} 已放置到 A{track_index} 轨（按时间线截齐）")
+        return {"file": filename, "method": "timeline", "track": track_index}
+    except Exception as e:  # noqa: BLE001 - 配乐失败不阻断时间线交付
+        logger.warning("配乐入轨失败，降级为媒体池: %s", e)
+        report("music", f"配乐 {filename} 已入媒体池，拖到音频轨即可")
+        return {"file": filename, "method": "media_pool"}
 
 
 def _add_subtitles(media_pool, timeline, ir: EditingIR, report) -> dict:
