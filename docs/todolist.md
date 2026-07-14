@@ -165,3 +165,12 @@
 - [x] Resolve：样式仅体现渲染成片（执行摘要标注）
 - [x] 前端：方案卡样式预设/位置 Segmented 选择
 - [x] M15 验证：pytest 3 项通过（64 passed 全量）；真实对话"字幕放到顶部换醒目黄色重新渲染"→ bold+top 应用并重渲，抽帧确认顶部黄字底条且自动缩字不溢出
+
+## M16 Resolve 渲染与 AI 工具（phase2-roadmap §5）
+
+- [x] adapter：render_with_resolve（建时间线 → SetRenderSettings/AddRenderJob/StartRendering → 状态轮询 SSE；JobStatus 本地化坑改用百分比判断）
+- [x] run_render 支持 engine=ffmpeg|resolve；渲染 API body 加 engine；对话 render 意图带 engine
+- [x] adapter：generate_speech（GenerateSpeech TTS；实测缺 Extras 返回错误字符串，透明报错含安装指引）；对话 generate_voiceover 意图（产物注册为素材）
+- [x] 前端：渲染按钮加 Resolve 引擎入口
+- [x] M16 验证：pytest 2 项通过（66 passed 全量）；真实对话"用 Resolve 渲染高质量版"→ 竖屏 1080×1920 h264 成片 3.3 秒渲完（含时间线转场配乐）；TTS 探测返回透明安装指引
+- [ ] 暂缓：auto_captions 自动字幕（本机素材无真人对白，无验证条件）；DetectSceneCuts 对照（作用于时间线而非素材文件，与分析管线无消费点）

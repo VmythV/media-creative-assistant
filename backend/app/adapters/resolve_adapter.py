@@ -229,3 +229,95 @@ def _add_subtitles(media_pool, timeline, ir: EditingIR, report) -> dict:
         return {"count": count, "method": "media_pool", "srt_path": str(srt_path)}
     report("subtitle", f"SRT 已生成：{srt_path}（可在 Resolve 中手动导入）")
     return {"count": count, "method": "manual", "srt_path": str(srt_path)}
+
+
+def render_with_resolve(ir: EditingIR, out_dir: Path, *, filename: str | None = None,
+                        progress=None) -> dict:
+    """Resolve 渲染管线（M16）：建时间线 → 渲染队列 → 轮询完成。返回 {video, duration, resolve}。
+
+    时间线含转场与配乐（M10）；字幕不在时间线上，成片不含字幕（提示走 ffmpeg 引擎或自动字幕）。
+    """
+
+    def report(step: str, detail: str = "") -> None:
+        logger.info("resolve-render: %s %s", step, detail)
+        if progress:
+            progress(step, detail)
+
+    summary = execute_ir(ir, progress=progress)
+
+    resolve = connect()
+    project = resolve.GetProjectManager().GetCurrentProject()
+    if project is None:
+        raise ResolveAdapterError("渲染失败：当前项目丢失")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = filename or f"{ir.project.name}_resolve"
+    res = ir.render if ir.render is not None else ir.project.resolution
+
+    if not project.SetCurrentRenderFormatAndCodec("mp4", "H264"):
+        logger.warning("设置渲染格式 mp4/H264 失败，沿用当前格式")
+    project.SetCurrentRenderMode(1)  # Single clip
+    ok = project.SetRenderSettings({
+        "SelectAllFrames": True,
+        "TargetDir": str(out_dir),
+        "CustomName": name,
+        "FormatWidth": res.width,
+        "FormatHeight": res.height,
+        "ExportVideo": True,
+        "ExportAudio": True,
+    })
+    if not ok:
+        raise ResolveAdapterError("SetRenderSettings 失败")
+    job = project.AddRenderJob()
+    if not job:
+        raise ResolveAdapterError("AddRenderJob 失败")
+    if not project.StartRendering(job):
+        raise ResolveAdapterError("StartRendering 失败")
+    report("render", f"渲染任务 {job} 已开始（{res.width}x{res.height}）")
+
+    while project.IsRenderingInProgress():
+        status = project.GetRenderJobStatus(job) or {}
+        report("render", f"{status.get('CompletionPercentage', 0)}%")
+        time.sleep(2)
+    status = project.GetRenderJobStatus(job) or {}
+    # JobStatus 会被本地化（中文版返回"完成"），用完成百分比判断
+    if status.get("CompletionPercentage") != 100:
+        raise ResolveAdapterError(f"渲染未完成: {status}")
+
+    video = out_dir / f"{name}.mp4"
+    if not video.is_file():  # Resolve 可能追加自定义后缀，兜底找最新 mp4
+        candidates = sorted(out_dir.glob(f"{name}*.mp4"), key=lambda p: p.stat().st_mtime)
+        if not candidates:
+            raise ResolveAdapterError(f"渲染完成但未找到产物: {video}")
+        video = candidates[-1]
+    report("done", str(video))
+    from app.ir.schema import timeline_duration
+
+    return {"video": str(video), "duration": timeline_duration(ir), "resolve": summary}
+
+
+def generate_speech(text: str, out_dir: Path, *, voice: str = "Female 1") -> dict:
+    """AI 配音（M16）：Resolve GenerateSpeech。Extras 缺失/非 Studio 时透明报错。"""
+    resolve = connect()
+    pm = resolve.GetProjectManager()
+    project = pm.GetCurrentProject() or pm.CreateProject(f"voiceover-{time.strftime('%H%M%S')}")
+    item = project.GenerateSpeech(
+        {"TextInput": text[:350], "VoiceModel": voice, "AddToTimeline": False}, "01:00:00:00"
+    )
+    if isinstance(item, str):  # 缺 Extras 包时返回错误字符串（实测）
+        raise ResolveAdapterError(
+            f"语音生成不可用（{item}）：请在 Resolve 菜单 Workspace → Extras Download Manager "
+            "安装 AI Speech Generator 后重试"
+        )
+    if item is None:
+        raise ResolveAdapterError(
+            "语音生成不可用：请在 Resolve 菜单 → Extras Download Manager 安装 AI Speech Generator 后重试"
+        )
+    src = item.GetClipProperty("File Path")
+    if not src or not Path(src).is_file():
+        raise ResolveAdapterError("语音已生成但未找到音频文件")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / f"voiceover_{int(time.time())}{Path(src).suffix}"
+    import shutil
+
+    shutil.copyfile(src, dest)
+    return {"audio": str(dest), "text": text[:350]}

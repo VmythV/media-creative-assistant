@@ -110,9 +110,17 @@ async def run_execution(plan_id: int, ir_dict: dict, *, force_fallback: bool = F
     return result
 
 
+class RenderRequest(BaseModel):
+    engine: str = "ffmpeg"  # ffmpeg / resolve（M16）
+
+
 @router.post("/plans/{plan_id}/render")
-async def render_plan(plan_id: int, db: Session = Depends(get_db)) -> dict:
-    """确认/已执行的方案 → mp4 成片（设计文档 §9.2）。"""
+async def render_plan(plan_id: int, req: RenderRequest | None = None,
+                      db: Session = Depends(get_db)) -> dict:
+    """确认/已执行的方案 → mp4 成片（设计文档 §9.2；engine=resolve 走 Resolve 渲染队列）。"""
+    req = req or RenderRequest()
+    if req.engine not in ("ffmpeg", "resolve"):
+        raise HTTPException(400, f"未知渲染引擎: {req.engine}")
     plan = db.get(EditPlan, plan_id)
     if plan is None:
         raise HTTPException(404, "方案不存在")
@@ -122,35 +130,50 @@ async def render_plan(plan_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(400, "方案没有 Editing IR")
     ir_dict = dict(plan.ir)
 
-    asyncio.create_task(_render_safely(plan_id, ir_dict))
-    return {"plan_id": plan_id, "status": "rendering"}
+    asyncio.create_task(_render_safely(plan_id, ir_dict, req.engine))
+    return {"plan_id": plan_id, "status": "rendering", "engine": req.engine}
 
 
-async def _render_safely(plan_id: int, ir_dict: dict) -> None:
+async def _render_safely(plan_id: int, ir_dict: dict, engine: str = "ffmpeg") -> None:
     try:
-        await run_render(plan_id, ir_dict)
+        await run_render(plan_id, ir_dict, engine=engine)
     except Exception:  # noqa: BLE001 - run_render 已落库并上报 SSE
         pass
 
 
-async def run_render(plan_id: int, ir_dict: dict) -> dict:
+async def run_render(plan_id: int, ir_dict: dict, *, engine: str = "ffmpeg") -> dict:
     """渲染核心（可等待）：IR → mp4 + 预览地址，结果写回方案；失败落库后抛异常。
 
     供渲染 API（后台任务）与对话执行器（串联等待，M12）共用。
+    engine=resolve（M16）：走 Resolve 渲染队列（含时间线转场/配乐；字幕不在
+    时间线上，成片不含字幕——需要字幕请用默认 ffmpeg 引擎）。
     """
 
     def emit(step: str, detail: str = "") -> None:
         bus.publish("render", {"plan_id": plan_id, "step": step, "detail": detail})
 
-    emit("start")
+    emit("start", engine)
     try:
         out_dir = settings.data_dir / "output" / f"plan_{plan_id}"
-        result = await registry.execute(
-            "render_video", {"ir": ir_dict, "output_dir": str(out_dir)}
-        )
-        if result.error:
-            raise RuntimeError(result.error)
-        output = dict(result.output)
+        if engine == "resolve":
+            from app.adapters.resolve_adapter import render_with_resolve
+
+            parsed = validate_ir(ir_dict)
+            raw = await asyncio.to_thread(
+                render_with_resolve, parsed, out_dir,
+                progress=lambda s, d: emit(f"resolve:{s}", d),
+            )
+            output = {"video": raw["video"], "duration": raw["duration"],
+                      "engine": "resolve", "subtitles_burned": False,
+                      "clips": len(parsed.tracks[0].items) if parsed.tracks else 0,
+                      "note": "Resolve 渲染成片不含字幕（字幕请用默认引擎或在 Resolve 内上轨后手动渲染）"}
+        else:
+            result = await registry.execute(
+                "render_video", {"ir": ir_dict, "output_dir": str(out_dir)}
+            )
+            if result.error:
+                raise RuntimeError(result.error)
+            output = {**dict(result.output), "engine": "ffmpeg"}
         # 浏览器内预览地址（main.py 挂载 /output → data/output）
         output["video_url"] = f"/output/plan_{plan_id}/{Path(output['video']).name}"
         with db_session() as s:

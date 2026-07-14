@@ -400,13 +400,22 @@ export function PlanPanel({
                     </Button>
                   )}
                   {["confirmed", "executed"].includes(p.status) && (
-                    <Button
-                      onClick={() =>
-                        api.renderPlan(p.id)
-                          .then(() => { message.success("渲染已开始，完成后自动刷新"); refresh(); })
-                          .catch((e) => message.error(String(e)))}>
-                      渲染成片（mp4）
-                    </Button>
+                    <>
+                      <Button
+                        onClick={() =>
+                          api.renderPlan(p.id)
+                            .then(() => { message.success("渲染已开始，完成后自动刷新"); refresh(); })
+                            .catch((e) => message.error(String(e)))}>
+                        渲染成片（mp4）
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          api.renderPlan(p.id, "resolve")
+                            .then(() => { message.success("Resolve 渲染已开始（不含字幕，含时间线转场配乐）"); refresh(); })
+                            .catch((e) => message.error(String(e)))}>
+                        Resolve 渲染
+                      </Button>
+                    </>
                   )}
                 </Space>
                 {["draft", "confirmed", "executed"].includes(p.status) && (

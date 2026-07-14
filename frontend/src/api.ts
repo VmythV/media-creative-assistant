@@ -162,7 +162,8 @@ export const api = {
   confirmPlan: (id: number) => request<Plan>(`/api/plans/${id}/confirm`, { method: "POST" }),
   executePlan: (id: number) =>
     request(`/api/plans/${id}/execute`, { method: "POST", body: JSON.stringify({}) }),
-  renderPlan: (id: number) => request(`/api/plans/${id}/render`, { method: "POST" }),
+  renderPlan: (id: number, engine = "ffmpeg") =>
+    request(`/api/plans/${id}/render`, { method: "POST", body: JSON.stringify({ engine }) }),
   revisePlan: (id: number, instruction: string) =>
     request<{ plan_id: number }>(`/api/plans/${id}/revise`, {
       method: "POST", body: JSON.stringify({ instruction }),
