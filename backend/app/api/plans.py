@@ -175,40 +175,54 @@ class MusicRequest(BaseModel):
     loop: bool = True
 
 
+def apply_music(plan_id: int, path: str, *, gain_db: float = -16.0, fade_in: float = 1.0,
+                fade_out: float = 2.0, loop: bool = True) -> str:
+    """配乐核心（供 API 与对话执行器共用）：确定性写 IR 音频轨。返回文件名；失败抛 ValueError。"""
+    file = Path(path).expanduser()
+    if not file.is_file():
+        raise ValueError(f"文件不存在: {path}")
+    meta = probe_media(str(file))
+    if not meta.get("audio"):
+        raise ValueError("该文件不含音频流")
+
+    with db_session() as db:
+        plan = db.get(EditPlan, plan_id)
+        if plan is None:
+            raise ValueError("方案不存在")
+        if not plan.ir:
+            raise ValueError("方案没有 Editing IR")
+        ir = dict(plan.ir)
+        if ir.get("version") == "0.1":  # 音频轨需要 0.2+；更高版本（0.3 转场）保持不降级
+            ir["version"] = "0.2"
+        ir["sources"] = [s for s in ir["sources"] if s["id"] != MUSIC_SOURCE_ID] + [
+            {"id": MUSIC_SOURCE_ID, "path": str(file), "duration": meta["duration"]}
+        ]
+        ir["tracks"] = [t for t in ir["tracks"] if t.get("type") != "audio"] + [
+            {"type": "audio", "index": 1, "items": [{
+                "type": "music", "source_id": MUSIC_SOURCE_ID, "gain_db": gain_db,
+                "fade_in": fade_in, "fade_out": fade_out, "loop": loop,
+            }]}
+        ]
+        try:
+            validate_ir(ir)
+        except IRValidationError as e:
+            raise ValueError(f"配乐后 IR 校验失败: {e}") from e
+        plan.ir = ir
+        db.commit()
+    return file.name
+
+
 @router.put("/plans/{plan_id}/music")
 def set_music(plan_id: int, req: MusicRequest, db: Session = Depends(get_db)) -> dict:
     """设置/替换方案配乐：确定性写入 IR 音频轨，不经过模型（设计文档 §11）。"""
-    plan = db.get(EditPlan, plan_id)
-    if plan is None:
+    if db.get(EditPlan, plan_id) is None:
         raise HTTPException(404, "方案不存在")
-    if not plan.ir:
-        raise HTTPException(400, "方案没有 Editing IR")
-    file = Path(req.path).expanduser()
-    if not file.is_file():
-        raise HTTPException(400, f"文件不存在: {req.path}")
-    meta = probe_media(str(file))
-    if not meta.get("audio"):
-        raise HTTPException(400, "该文件不含音频流")
-
-    ir = dict(plan.ir)
-    if ir.get("version") == "0.1":  # 音频轨需要 0.2+；更高版本（0.3 转场）保持不降级
-        ir["version"] = "0.2"
-    ir["sources"] = [s for s in ir["sources"] if s["id"] != MUSIC_SOURCE_ID] + [
-        {"id": MUSIC_SOURCE_ID, "path": str(file), "duration": meta["duration"]}
-    ]
-    ir["tracks"] = [t for t in ir["tracks"] if t.get("type") != "audio"] + [
-        {"type": "audio", "index": 1, "items": [{
-            "type": "music", "source_id": MUSIC_SOURCE_ID, "gain_db": req.gain_db,
-            "fade_in": req.fade_in, "fade_out": req.fade_out, "loop": req.loop,
-        }]}
-    ]
     try:
-        validate_ir(ir)
-    except IRValidationError as e:
-        raise HTTPException(400, f"配乐后 IR 校验失败: {e}") from e
-    plan.ir = ir
-    db.commit()
-    return {"plan_id": plan_id, "music": file.name, "gain_db": req.gain_db}
+        filename = apply_music(plan_id, req.path, gain_db=req.gain_db,
+                               fade_in=req.fade_in, fade_out=req.fade_out, loop=req.loop)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"plan_id": plan_id, "music": filename, "gain_db": req.gain_db}
 
 
 @router.delete("/plans/{plan_id}/music")

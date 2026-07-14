@@ -127,3 +127,12 @@
 ---
 
 第二阶段（M12 起）路线与优先级见 `docs/phase2-roadmap.md`；立项时逐里程碑迁入本清单。
+
+## M12 统一自然语言入口（phase2-roadmap §1）
+
+- [x] Intent Router：受限格式解析（reply + actions 白名单 + Pydantic 参数校验），状态简报注入
+- [x] 动作执行器：串行执行（依赖动作等待完成），失败中断后续标 skipped，SSE 推进度
+- [x] 会话：AgentSession 复用（对话历史 + 当前方案上下文，"再快一点"可指代）
+- [x] unsupported 意图：能力边界清单驱动的"原因 + 手动指引"回复
+- [x] API：POST /api/chat + GET /api/chat/{session_id}；前端「对话」页签（默认页，消息流 + 动作卡）
+- [x] M12 验证：pytest 4 项通过（53 passed 全量）；真实走查："做15秒江南短片带字幕转场配乐渲染出来"一句话串联 create_plan→set_music→render 全部完成（成片 17s URL 200）；"节奏再快一点+加画中画"→ 修订正确指代当前方案（20s→13.5s）且画中画获得 Resolve 手动指引

@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/assetspanel.tsx","./src/highlightspanel.tsx","./src/logspanel.tsx","./src/memorypanel.tsx","./src/planpanel.tsx","./src/api.ts","./src/main.tsx","./src/useevents.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/assetspanel.tsx","./src/chatpanel.tsx","./src/highlightspanel.tsx","./src/logspanel.tsx","./src/memorypanel.tsx","./src/planpanel.tsx","./src/api.ts","./src/main.tsx","./src/useevents.ts"],"version":"5.9.3"}

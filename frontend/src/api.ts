@@ -88,6 +88,23 @@ export interface RenderResult {
   error?: string;
 }
 
+export interface ChatAction {
+  intent: string;
+  params: Record<string, unknown>;
+  status: string; // pending/done/failed/skipped/invalid
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface ChatMessage {
+  role: string; // user/assistant/action
+  content?: string;
+  intent?: string;
+  status?: string;
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface MemoryItem {
   id: number;
   kind: string;
@@ -155,6 +172,13 @@ export const api = {
     }),
   removeMusic: (id: number) => request(`/api/plans/${id}/music`, { method: "DELETE" }),
   logs: () => request<{ logs: LogEntry[] }>("/api/logs"),
+  chat: (message: string, session_id?: string | null) =>
+    request<{ session_id: string; reply: string; actions: ChatAction[] }>(
+      "/api/chat",
+      { method: "POST", body: JSON.stringify({ message, session_id }) },
+    ),
+  chatSession: (id: string) =>
+    request<{ session_id: string; messages: ChatMessage[] }>(`/api/chat/${id}`),
   memories: () => request<{ memories: MemoryItem[] }>("/api/memory"),
   addMemory: (content: string) =>
     request<MemoryItem>("/api/memory", { method: "POST", body: JSON.stringify({ content }) }),

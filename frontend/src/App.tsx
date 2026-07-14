@@ -7,6 +7,7 @@ import { AssetsPanel } from "./AssetsPanel";
 import { HighlightsPanel } from "./HighlightsPanel";
 import { LogsPanel } from "./LogsPanel";
 import { MemoryPanel } from "./MemoryPanel";
+import { ChatPanel } from "./ChatPanel";
 import { PlanPanel } from "./PlanPanel";
 import { useEvents } from "./useEvents";
 
@@ -74,6 +75,11 @@ export default function App() {
         <Tabs
           size="large"
           items={[
+            {
+              key: "chat",
+              label: "对话",
+              children: <ChatPanel refresh={refresh} />,
+            },
             {
               key: "assets",
               label: `素材（${assets.length}）`,

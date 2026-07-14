@@ -1,0 +1,415 @@
+"""对话式指挥（M12，phase2-roadmap §1）：自然语言 → 意图序列 → 串联执行。
+
+风险控制沿用方案生成：模型只产出受限格式（reply + 白名单 actions），
+参数经 Pydantic 校验，动作实现全部是确定性代码；做不了的事在 reply
+中给出原因与手动指引（能力边界透明原则）。
+"""
+
+import asyncio
+import json
+import logging
+import uuid
+from pathlib import Path
+
+from pydantic import BaseModel, ValidationError
+
+from app.config import settings
+from app.providers import get_llm_provider
+from app.runtime.events import bus
+from app.runtime.planning import diff_plans, generate_plan, revise_plan
+from app.store.db import db_session
+from app.store.models import AgentSession, Asset, EditPlan
+
+logger = logging.getLogger("mca.chat")
+
+AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac"}
+
+
+# ---------- 意图白名单与参数 schema ----------
+
+class CreatePlanParams(BaseModel):
+    goal: str
+
+
+class RevisePlanParams(BaseModel):
+    instruction: str
+    plan_id: int | None = None
+
+
+class MusicParams(BaseModel):
+    path: str | None = None
+    mood: str | None = None
+    gain_db: float = -16.0
+    plan_id: int | None = None
+
+
+class PlanRefParams(BaseModel):
+    plan_id: int | None = None
+
+
+class ImportParams(BaseModel):
+    directory: str
+
+
+INTENT_PARAMS: dict[str, type[BaseModel]] = {
+    "create_plan": CreatePlanParams,
+    "revise_plan": RevisePlanParams,
+    "confirm_plan": PlanRefParams,
+    "set_music": MusicParams,
+    "remove_music": PlanRefParams,
+    "render": PlanRefParams,
+    "execute": PlanRefParams,
+    "import_assets": ImportParams,
+    "analyze_assets": PlanRefParams,  # 无参，占位复用
+}
+
+CHAT_SYSTEM_PROMPT = """你是 AI 视频剪辑副驾驶的调度员。根据用户消息和当前系统状态，产出给用户的回应与要执行的动作序列。
+
+只输出 JSON：{"reply": "给用户的中文回应", "actions": [{"intent": "...", "params": {...}}]}
+
+可用动作（intent 与 params）：
+- create_plan {"goal": 创作目标}：生成新剪辑方案（需已有已分析素材）
+- revise_plan {"instruction": 修订指令, "plan_id"?: 方案id}：修订方案（不给 plan_id 则用当前方案）
+- confirm_plan {"plan_id"?}：确认方案
+- set_music {"path"?: 音乐文件绝对路径, "mood"?: 情绪描述}：设置配乐；用户没给路径就只填 mood，系统从音乐目录挑选
+- remove_music {"plan_id"?}：移除配乐
+- render {"plan_id"?}：渲染 mp4 成片（draft 会自动先确认）
+- execute {"plan_id"?}：生成 DaVinci Resolve 时间线（含转场与配乐入轨）
+- import_assets {"directory": 素材目录绝对路径}：导入素材（视频/照片）
+- analyze_assets {}：分析全部待分析素材
+
+规则：
+1. 只能使用上述 intent。多步请求按依赖顺序排 actions（如"做个方案配上音乐渲染出来"→ create_plan → set_music → render）。
+2. 做不了的事：actions 留空或不含该步，在 reply 中说明原因和手动操作步骤（见能力边界）。
+3. 缺关键信息或意图不明时不要猜测执行：actions=[]，reply 追问。
+4. 纯咨询（问状态/问方案内容）：actions=[]，根据下方系统状态直接回答。
+5. reply 简洁自然，先说要做什么/结论，不要罗列 JSON。
+
+能力边界（系统做不了，回复时给手动指引）：
+- Resolve 时间线内的转场方向/颜色微调 → 时间线上双击转场，在检查器调整（渲染成片的转场类型是精确的）
+- 把字幕直接写入 Resolve 字幕轨 → 媒体池右键 SRT → Insert Selected Subtitles to Timeline
+- 关键帧动画/复杂特效 → Resolve Fusion 页手动制作
+- 片段音量/声像（Resolve 内）→ Fairlight 页手动；渲染成片的配乐响度可通过 set_music 的 gain 控制
+- 竖屏/输出规格切换、字幕样式定制、变速、画中画 → 后续版本支持，当前请在 Resolve 中手动调整
+
+当前系统状态：
+{state}"""
+
+
+def _state_brief() -> str:
+    """给调度员的系统状态简报（紧凑，供指代解析与咨询回答）。"""
+    lines = []
+    with db_session() as db:
+        assets = db.query(Asset).all()
+        analyzed = [a for a in assets if a.status == "analyzed"]
+        lines.append(f"素材：共 {len(assets)} 个，已分析 {len(analyzed)} 个")
+        plans = db.query(EditPlan).order_by(EditPlan.id.desc()).limit(5).all()
+        if plans:
+            lines.append("最近方案（新→旧）：")
+            for p in plans:
+                title = p.plan.get("title") or p.goal[:20]
+                extra = ""
+                if p.plan.get("render", {}).get("video_url"):
+                    extra = "，已出片"
+                lines.append(f"  - #{p.id}「{title}」状态 {p.status}{extra}")
+        else:
+            lines.append("还没有剪辑方案")
+    music_dir = settings.data_dir / "music"
+    tracks = [f.name for f in music_dir.glob("*") if f.suffix.lower() in AUDIO_EXTS] \
+        if music_dir.is_dir() else []
+    lines.append(f"音乐目录：{len(tracks)} 个文件" + (f"（{', '.join(tracks[:5])}）" if tracks else ""))
+    return "\n".join(lines)
+
+
+# ---------- 会话 ----------
+
+def _load_session(session_id: str | None) -> dict:
+    with db_session() as db:
+        if session_id:
+            row = db.get(AgentSession, session_id)
+            if row is not None:
+                return {"id": row.id, "messages": list(row.messages), "context": dict(row.context)}
+        new_id = session_id or uuid.uuid4().hex[:16]
+        db.add(AgentSession(id=new_id, messages=[], context={}))
+        db.commit()
+        return {"id": new_id, "messages": [], "context": {}}
+
+
+def _save_session(session: dict) -> None:
+    with db_session() as db:
+        row = db.get(AgentSession, session["id"])
+        row.messages = session["messages"]
+        row.context = session["context"]
+        db.commit()
+
+
+def _append(session: dict, entry: dict) -> None:
+    session["messages"] = [*session["messages"], entry]
+    _save_session(session)
+
+
+# ---------- 路由 ----------
+
+async def route_message(session: dict, message: str) -> dict:
+    """用户消息 → {"reply", "actions": [已校验的动作]}；白名单外/参数非法的动作标 invalid。"""
+    llm = get_llm_provider()
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in session["messages"] if m.get("role") in ("user", "assistant")
+    ][-8:]
+    messages = [
+        # 提示词含 JSON 花括号示例，不能用 str.format
+        {"role": "system", "content": CHAT_SYSTEM_PROMPT.replace("{state}", _state_brief())},
+        *history,
+        {"role": "user", "content": message},
+    ]
+    resp = await llm.chat(messages, json_mode=True, temperature=0.2)
+    try:
+        parsed = json.loads(resp["content"])
+    except json.JSONDecodeError:
+        return {"reply": "抱歉，我没理解这句话，换个说法试试？", "actions": []}
+
+    actions = []
+    for raw in (parsed.get("actions") or [])[:6]:
+        intent = raw.get("intent")
+        if intent in ("none", None):
+            continue
+        if intent not in INTENT_PARAMS:
+            actions.append({"intent": str(intent), "params": {}, "status": "invalid",
+                            "error": "白名单外的动作，已拒绝"})
+            continue
+        try:
+            params = INTENT_PARAMS[intent].model_validate(raw.get("params") or {})
+            actions.append({"intent": intent, "params": params.model_dump(), "status": "pending"})
+        except ValidationError as e:
+            actions.append({"intent": intent, "params": raw.get("params") or {},
+                            "status": "invalid", "error": f"参数校验失败: {e.errors()[0].get('msg')}"})
+    return {"reply": parsed.get("reply") or "", "actions": actions}
+
+
+# ---------- 动作实现（全部确定性代码）----------
+
+def _resolve_plan_id(session: dict, params: dict) -> int:
+    pid = params.get("plan_id") or session["context"].get("plan_id")
+    if pid is None:
+        with db_session() as db:
+            row = db.query(EditPlan).order_by(EditPlan.id.desc()).first()
+            pid = row.id if row else None
+    if pid is None:
+        raise ValueError("还没有任何方案，先生成一个吧")
+    return pid
+
+
+def _pick_music(params: dict) -> str:
+    if params.get("path"):
+        return params["path"]
+    music_dir = settings.data_dir / "music"
+    tracks = sorted(
+        f for f in music_dir.glob("*") if f.suffix.lower() in AUDIO_EXTS
+    ) if music_dir.is_dir() else []
+    if not tracks:
+        raise ValueError(f"音乐目录 {music_dir} 为空，请提供音乐文件路径")
+    return str(tracks[0])  # 音乐库按情绪推荐是 M14；当前取目录第一个并在结果中注明
+
+
+async def _act_create_plan(session: dict, params: dict) -> dict:
+    with db_session() as db:
+        row = EditPlan(goal=params["goal"], plan={}, status="generating")
+        db.add(row)
+        db.commit()
+        plan_id = row.id
+    try:
+        result = await generate_plan(params["goal"])
+    except Exception:
+        with db_session() as db:
+            row = db.get(EditPlan, plan_id)
+            row.status = "failed"
+            db.commit()
+        raise
+    with db_session() as db:
+        row = db.get(EditPlan, plan_id)
+        row.plan, row.ir, row.status = result["plan"], result["ir"], "draft"
+        db.commit()
+    session["context"]["plan_id"] = plan_id
+    return {"plan_id": plan_id, "title": result["plan"].get("title"),
+            "clips": len(result["plan"].get("clips") or [])}
+
+
+async def _act_revise_plan(session: dict, params: dict) -> dict:
+    base_id = params.get("plan_id") or _resolve_plan_id(session, params)
+    with db_session() as db:
+        base = db.get(EditPlan, base_id)
+        if base is None or not base.ir:
+            raise ValueError(f"方案 #{base_id} 不存在或没有内容")
+        base_plan = {k: v for k, v in base.plan.items() if k not in ("execution", "render")}
+        new_row = EditPlan(goal=base.goal, plan={"revised_from": base_id,
+                           "revision_instruction": params["instruction"]}, status="generating")
+        db.add(new_row)
+        db.commit()
+        new_id = new_row.id
+    try:
+        result = await revise_plan(base_plan, params["instruction"])
+    except Exception:
+        with db_session() as db:
+            row = db.get(EditPlan, new_id)
+            row.status = "failed"
+            db.commit()
+        raise
+    diff = diff_plans(base_plan, result["plan"])
+    with db_session() as db:
+        row = db.get(EditPlan, new_id)
+        row.plan = {**result["plan"], "revised_from": base_id,
+                    "revision_instruction": params["instruction"], "diff": diff}
+        row.ir, row.status = result["ir"], "draft"
+        db.commit()
+    session["context"]["plan_id"] = new_id
+    # 沉淀长期偏好（M11）；失败不影响主流程
+    try:
+        from app.runtime.planning import extract_preferences
+
+        await extract_preferences(params["instruction"])
+    except Exception:  # noqa: BLE001
+        logger.warning("偏好提取失败（已忽略）", exc_info=True)
+    return {"plan_id": new_id, "revised_from": base_id, "duration": diff.get("duration")}
+
+
+def _confirm_if_draft(plan_id: int) -> None:
+    with db_session() as db:
+        row = db.get(EditPlan, plan_id)
+        if row.status == "draft":
+            row.status = "confirmed"
+            db.commit()
+
+
+async def _act_render(session: dict, params: dict) -> dict:
+    from app.api.execute import run_render
+
+    plan_id = _resolve_plan_id(session, params)
+    _confirm_if_draft(plan_id)
+    with db_session() as db:
+        ir_dict = dict(db.get(EditPlan, plan_id).ir or {})
+    if not ir_dict:
+        raise ValueError(f"方案 #{plan_id} 没有 Editing IR")
+    output = await run_render(plan_id, ir_dict)
+    return {"plan_id": plan_id, "video_url": output.get("video_url"),
+            "duration": output.get("duration")}
+
+
+async def _act_execute(session: dict, params: dict) -> dict:
+    from app.api.execute import run_execution
+
+    plan_id = _resolve_plan_id(session, params)
+    _confirm_if_draft(plan_id)
+    with db_session() as db:
+        ir_dict = dict(db.get(EditPlan, plan_id).ir or {})
+    if not ir_dict:
+        raise ValueError(f"方案 #{plan_id} 没有 Editing IR")
+    result = await run_execution(plan_id, ir_dict)
+    return {"plan_id": plan_id, "mode": result.get("mode")}
+
+
+async def _act_set_music(session: dict, params: dict) -> dict:
+    from app.api.plans import apply_music
+
+    plan_id = _resolve_plan_id(session, params)
+    path = _pick_music(params)
+    filename = apply_music(plan_id, path, gain_db=params.get("gain_db", -16.0))
+    note = "" if params.get("path") else "（按情绪推荐将在后续版本支持，当前选自音乐目录）"
+    return {"plan_id": plan_id, "music": filename, "note": note or None}
+
+
+async def _act_remove_music(session: dict, params: dict) -> dict:
+    plan_id = _resolve_plan_id(session, params)
+    with db_session() as db:
+        plan = db.get(EditPlan, plan_id)
+        if not plan or not plan.ir:
+            raise ValueError(f"方案 #{plan_id} 不存在或没有 IR")
+        ir = dict(plan.ir)
+        ir["sources"] = [s for s in ir["sources"] if s["id"] != "src_music"]
+        ir["tracks"] = [t for t in ir["tracks"] if t.get("type") != "audio"]
+        plan.ir = ir
+        db.commit()
+    return {"plan_id": plan_id, "music": None}
+
+
+async def _act_confirm(session: dict, params: dict) -> dict:
+    plan_id = _resolve_plan_id(session, params)
+    _confirm_if_draft(plan_id)
+    return {"plan_id": plan_id, "status": "confirmed"}
+
+
+async def _act_import_assets(session: dict, params: dict) -> dict:
+    from fastapi import HTTPException
+
+    from app.api.assets import ImportRequest, import_assets
+
+    with db_session() as db:
+        try:
+            result = import_assets(ImportRequest(directory=params["directory"]), db)
+        except HTTPException as e:
+            raise ValueError(e.detail) from e
+    return {"imported": len(result["imported"]), "errors": len(result["errors"])}
+
+
+async def _act_analyze_assets(session: dict, params: dict) -> dict:
+    from app.runtime.pipeline import analyze_asset
+
+    with db_session() as db:
+        ids = [a.id for a in db.query(Asset).filter(Asset.status != "analyzed").all()]
+    for aid in ids:
+        await analyze_asset(aid)
+    return {"analyzed": len(ids)}
+
+
+ACTION_IMPL = {
+    "create_plan": _act_create_plan,
+    "revise_plan": _act_revise_plan,
+    "confirm_plan": _act_confirm,
+    "set_music": _act_set_music,
+    "remove_music": _act_remove_music,
+    "render": _act_render,
+    "execute": _act_execute,
+    "import_assets": _act_import_assets,
+    "analyze_assets": _act_analyze_assets,
+}
+
+
+async def run_actions(session_id: str, actions: list[dict]) -> None:
+    """串行执行动作；失败中断后续（标 skipped）。结果追加进会话消息流。"""
+    session = _load_session(session_id)
+    failed = False
+    for action in actions:
+        entry = {"role": "action", **action}
+        if action["status"] == "invalid":
+            _append(session, entry)
+            continue
+        if failed:
+            entry["status"] = "skipped"
+            _append(session, entry)
+            continue
+        bus.publish("chat", {"session_id": session_id, "intent": action["intent"], "step": "start"})
+        try:
+            result = await ACTION_IMPL[action["intent"]](session, action["params"])
+            entry.update(status="done", result=result)
+            bus.publish("chat", {"session_id": session_id, "intent": action["intent"],
+                                 "step": "done", "detail": json.dumps(result, ensure_ascii=False)[:200]})
+        except Exception as e:  # noqa: BLE001 - 单动作失败中断链条并回报
+            logger.exception("对话动作 %s 失败", action["intent"])
+            entry.update(status="failed", error=str(e)[:300])
+            bus.publish("chat", {"session_id": session_id, "intent": action["intent"],
+                                 "step": "failed", "detail": str(e)[:200]})
+            failed = True
+        _append(session, entry)
+    _save_session(session)
+    bus.publish("chat", {"session_id": session_id, "step": "all_done"})
+
+
+async def handle_message(session_id: str | None, message: str) -> dict:
+    """对话入口：路由 + 启动后台执行。立即返回 reply 与计划动作。"""
+    session = _load_session(session_id)
+    _append(session, {"role": "user", "content": message})
+    routed = await route_message(session, message)
+    _append(session, {"role": "assistant", "content": routed["reply"]})
+    if routed["actions"]:
+        asyncio.create_task(run_actions(session["id"], routed["actions"]))
+    return {"session_id": session["id"], "reply": routed["reply"], "actions": routed["actions"]}

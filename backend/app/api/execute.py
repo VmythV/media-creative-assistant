@@ -66,41 +66,48 @@ async def execute_plan(plan_id: int, req: ExecuteRequest | None = None, db: Sess
         raise HTTPException(400, "方案没有 Editing IR")
     ir_dict = dict(plan.ir)
 
+    asyncio.create_task(run_execution(plan_id, ir_dict, force_fallback=req.force_fallback))
+    return {"plan_id": plan_id, "status": "executing"}
+
+
+async def run_execution(plan_id: int, ir_dict: dict, *, force_fallback: bool = False) -> dict:
+    """执行核心（可等待）：IR → Resolve 时间线或降级产物；校验失败抛异常。
+
+    供执行 API（后台任务）与对话执行器（串联等待，M12）共用。
+    """
+
     def emit(step: str, detail: str = "") -> None:
         bus.publish("execute", {"plan_id": plan_id, "step": step, "detail": detail})
 
-    async def run():
-        emit("start")
+    emit("start")
+    try:
+        validate_ir(ir_dict)  # 执行前校验（含素材文件存在性）
+    except Exception as e:  # noqa: BLE001
+        _finish(plan_id, "failed")
+        emit("failed", f"IR 校验失败: {e}")
+        raise
+
+    artifacts = _write_artifacts(plan_id, ir_dict)
+    result: dict = {"mode": "fallback", "artifacts": artifacts}
+
+    if not force_fallback and _resolve_available():
         try:
-            validate_ir(ir_dict)  # 执行前校验（含素材文件存在性）
-        except Exception as e:  # noqa: BLE001
-            _finish(plan_id, "failed")
-            emit("failed", f"IR 校验失败: {e}")
-            return
+            from app.adapters.resolve_adapter import execute_ir
 
-        artifacts = _write_artifacts(plan_id, ir_dict)
-        result: dict = {"mode": "fallback", "artifacts": artifacts}
+            parsed = validate_ir(ir_dict)
+            summary = await asyncio.to_thread(
+                execute_ir, parsed, progress=lambda s, d: emit(f"resolve:{s}", d)
+            )
+            result = {"mode": "resolve", "resolve": summary, "artifacts": artifacts}
+        except Exception as e:  # noqa: BLE001 - Resolve 失败自动降级
+            logger.exception("Resolve 执行失败，降级输出产物")
+            emit("degraded", f"Resolve 执行失败，已降级输出产物: {str(e)[:200]}")
+    else:
+        emit("degraded", "Resolve 不可用或被跳过，输出 IR / 剪辑清单 / FCPXML")
 
-        if not req.force_fallback and _resolve_available():
-            try:
-                from app.adapters.resolve_adapter import execute_ir
-
-                parsed = validate_ir(ir_dict)
-                summary = await asyncio.to_thread(
-                    execute_ir, parsed, progress=lambda s, d: emit(f"resolve:{s}", d)
-                )
-                result = {"mode": "resolve", "resolve": summary, "artifacts": artifacts}
-            except Exception as e:  # noqa: BLE001 - Resolve 失败自动降级
-                logger.exception("Resolve 执行失败，降级输出产物")
-                emit("degraded", f"Resolve 执行失败，已降级输出产物: {str(e)[:200]}")
-        else:
-            emit("degraded", "Resolve 不可用或被跳过，输出 IR / 剪辑清单 / FCPXML")
-
-        _finish(plan_id, "executed", result)
-        emit("done", f"执行完成（{result['mode']}）")
-
-    asyncio.create_task(run())
-    return {"plan_id": plan_id, "status": "executing"}
+    _finish(plan_id, "executed", result)
+    emit("done", f"执行完成（{result['mode']}）")
+    return result
 
 
 @router.post("/plans/{plan_id}/render")
@@ -115,36 +122,51 @@ async def render_plan(plan_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(400, "方案没有 Editing IR")
     ir_dict = dict(plan.ir)
 
+    asyncio.create_task(_render_safely(plan_id, ir_dict))
+    return {"plan_id": plan_id, "status": "rendering"}
+
+
+async def _render_safely(plan_id: int, ir_dict: dict) -> None:
+    try:
+        await run_render(plan_id, ir_dict)
+    except Exception:  # noqa: BLE001 - run_render 已落库并上报 SSE
+        pass
+
+
+async def run_render(plan_id: int, ir_dict: dict) -> dict:
+    """渲染核心（可等待）：IR → mp4 + 预览地址，结果写回方案；失败落库后抛异常。
+
+    供渲染 API（后台任务）与对话执行器（串联等待，M12）共用。
+    """
+
     def emit(step: str, detail: str = "") -> None:
         bus.publish("render", {"plan_id": plan_id, "step": step, "detail": detail})
 
-    async def run():
-        emit("start")
-        try:
-            out_dir = settings.data_dir / "output" / f"plan_{plan_id}"
-            result = await registry.execute(
-                "render_video", {"ir": ir_dict, "output_dir": str(out_dir)}
-            )
-            if result.error:
-                raise RuntimeError(result.error)
-            output = dict(result.output)
-            # 浏览器内预览地址（main.py 挂载 /output → data/output）
-            output["video_url"] = f"/output/plan_{plan_id}/{Path(output['video']).name}"
-            with db_session() as s:
-                row = s.get(EditPlan, plan_id)
-                row.plan = {**row.plan, "render": output}
-                s.commit()
-            emit("done", output["video"])
-        except Exception as e:  # noqa: BLE001 - 失败上报 SSE，不改方案状态
-            logger.exception("方案 %s 渲染失败", plan_id)
-            with db_session() as s:
-                row = s.get(EditPlan, plan_id)
-                row.plan = {**row.plan, "render": {"error": str(e)[:300]}}
-                s.commit()
-            emit("failed", str(e)[:300])
-
-    asyncio.create_task(run())
-    return {"plan_id": plan_id, "status": "rendering"}
+    emit("start")
+    try:
+        out_dir = settings.data_dir / "output" / f"plan_{plan_id}"
+        result = await registry.execute(
+            "render_video", {"ir": ir_dict, "output_dir": str(out_dir)}
+        )
+        if result.error:
+            raise RuntimeError(result.error)
+        output = dict(result.output)
+        # 浏览器内预览地址（main.py 挂载 /output → data/output）
+        output["video_url"] = f"/output/plan_{plan_id}/{Path(output['video']).name}"
+        with db_session() as s:
+            row = s.get(EditPlan, plan_id)
+            row.plan = {**row.plan, "render": output}
+            s.commit()
+        emit("done", output["video"])
+        return output
+    except Exception as e:  # noqa: BLE001 - 失败上报 SSE，不改方案状态
+        logger.exception("方案 %s 渲染失败", plan_id)
+        with db_session() as s:
+            row = s.get(EditPlan, plan_id)
+            row.plan = {**row.plan, "render": {"error": str(e)[:300]}}
+            s.commit()
+        emit("failed", str(e)[:300])
+        raise
 
 
 def _finish(plan_id: int, status: str, result: dict | None = None) -> None:
