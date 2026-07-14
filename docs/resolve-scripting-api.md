@@ -111,7 +111,27 @@ Resolve
 6. 播放控制、UI 选中状态基本不可控（只有播放头时间码 `SetCurrentTimecode`）。
 7. `AppendToTimeline` 的 clipInfo 无速度/变速参数。
 
-## 7. 对本项目的应用机会（按价值排序）
+## 7. Scripting 之外的操作/扩展途径（Developer 目录全览，2026-07-13 通读）
+
+`/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/` 下共 8 套机制：
+
+| 途径 | 技术形态 | 能做什么 | 与 Scripting API 的关系 |
+| --- | --- | --- | --- |
+| **Workflow Integrations** | ① Electron 插件（JS）② Python/Lua 脚本 + 内置 Qt UIManager | 把自己的应用**内嵌进 Resolve**（Workspace → Workflow Integrations 菜单）；JS 经 `WorkflowIntegration.node` 拿到与 Python 完全相同的 Resolve 对象模型 | 同一 API 面 + **独有的事件回调**：`RenderStart` / `RenderStop` / `ResolveQuit`（Scripting API 无任何事件推送）；Promise 异步版 API |
+| **OpenFX SDK** | C++（CUDA/OpenCL/Metal GPU） | 自定义视觉效果与**转场**插件（官方示例含 DissolveTransitionPlugin），装 `/Library/OFX/Plugins` | 扩充 UI 可用效果；脚本可经 `InsertOFXGeneratorIntoTimeline` 引用发生器类 |
+| **DCTL** | C-like GPU 像素着色器（.dctl 纯文本，免编译） | transform 型（单片段色彩/效果）与 **transition 型（双片段混合转场）**；可加密为 .dctle 分发 | 作为 LUT/ResolveFX DCTL 插件/转场插件被引用 |
+| **CodecPlugin (IO Encode SDK)** | C/C++ 动态库（.dvcp.bundle） | 自定义渲染编码器/容器（官方示例：x264），出现在交付页 | 渲染设置里可选 |
+| **Fusion Templates** | Fusion 宏（.setting 纯文本节点图） | Edit/Cut 页自定义**转场**/发生器/标题模板（示例：Noise Dissolve；用 Anim Curves 自适应转场时长） | 模板进 `Fusion/Templates/Edit/Transitions/` 即出现在 UI |
+| **Fusion Fuse** | Lua 编写的 Fusion 工具插件（.fuse） | 自定义 Fusion 节点（图像处理/形状/文字，9 个官方示例 + SDK PDF） | 属 Fusion 体系，经 `Fusion()` 对象可脚本化 |
+| **OGraf HTML Templates** | EBU 开放标准：HTML/CSS/JS Web Component（CEF 渲染） | **网页技术做 Edit 页标题/字幕图形**：`.ograf.json` 声明参数 schema，`goToTime()` 帧精确寻址，打包 .drfx 分发 | 程序化生成动态字幕/花字的正规通道 |
+| **LUT** | .cube 文本（1D/3D + shaper） | 色彩查找表数据格式规范 | `Graph.SetLUT` 引用 |
+
+要点：
+- **Workflow Integration 是"把我们产品嵌进 Resolve"的通道**——Electron 壳加载我们的 Web UI + `WorkflowIntegration.node` 直连 Resolve，用户不用在浏览器和 Resolve 间切换；渲染完成回调是外部 Scripting 拿不到的。脚本形态还能用 Resolve 内置 UIManager 画原生面板（跨 Win/Mac/Linux；Electron 插件形态不支持 Linux）。
+- **自定义转场有三条免/低编译路径**：Fusion 宏 .setting（纯文本，可程序化生成）、DCTL transition（文本着色器）、OpenFX（C++，最重）。它们扩充的是 UI 里可用的转场类型；程序化把转场放上时间线仍只有 FCPXML 导入一条路（§5.2）——两者组合理论上可行（FCPXML `filter-video` 引用自定义效果名），未验证。
+- 这些机制均为**能力扩展**（给 Resolve 添加效果/编码器/模板/面板），不新增"时间线自动化"接口；自动化面仍以 §3-§6 的 Scripting API 为准。
+
+## 8. 对本项目的应用机会（按价值排序）
 
 1. **M10 候选：Resolve 时间线带转场**——执行路径改为：生成含 `<transition>` 的 FCPXML（IR 已有 transition 字段，导出器补 `<transition>` 元素 + spine offset 计算）→ `ImportTimelineFromFile` 替代现行 `AppendToTimeline` 逐片段方案。fade/dissolve 映射 Cross Dissolve 已验证；其余 xfade 类型（wipe/slide/circle）需逐个试 FCPXML `filter-video` 效果名，映射不上的降级 Cross Dissolve。
 2. **配乐直接入轨**——`execute_ir` 中音频不再只入媒体池：`AppendToTimeline(mediaType=2, recordFrame=起始帧)` 直接放 A 轨（IR 的 MusicClip 已有全部所需信息）；gain/fade 属 API 空白（§6.4），响度仍靠渲染侧。
