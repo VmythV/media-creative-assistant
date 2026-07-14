@@ -101,3 +101,16 @@ class MemoryItem(Base):
     content: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String, default="manual")  # revision/manual
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class MusicTrack(Base):
+    """曲库音轨（M14 起使用）：data/music 扫描登记。"""
+
+    __tablename__ = "music_tracks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    path: Mapped[str] = mapped_column(String, unique=True)
+    filename: Mapped[str] = mapped_column(String)
+    duration: Mapped[float] = mapped_column()
+    mean_volume: Mapped[float | None] = mapped_column(nullable=True)  # dB，volumedetect
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

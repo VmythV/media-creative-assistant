@@ -290,6 +290,29 @@ def reset_output(plan_id: int, db: Session = Depends(get_db)) -> dict:
     return {"plan_id": plan_id, "render": None}
 
 
+class RecommendRequest(BaseModel):
+    mood: str | None = None
+    gain_db: float = -16.0
+
+
+@router.post("/plans/{plan_id}/music/recommend")
+async def recommend_and_set_music(plan_id: int, req: RecommendRequest | None = None,
+                                  db: Session = Depends(get_db)) -> dict:
+    """AI 从曲库推荐配乐并应用（M14）：id 白名单校验 + 确定性写 IR。"""
+    from app.runtime.music import recommend_music
+
+    req = req or RecommendRequest()
+    plan = db.get(EditPlan, plan_id)
+    if plan is None:
+        raise HTTPException(404, "方案不存在")
+    try:
+        reco = await recommend_music(req.mood, plan.plan)
+        filename = apply_music(plan_id, reco["path"], gain_db=req.gain_db)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"plan_id": plan_id, "music": filename, "reason": reco["reason"]}
+
+
 @router.delete("/plans/{plan_id}/music")
 def remove_music(plan_id: int, db: Session = Depends(get_db)) -> dict:
     plan = db.get(EditPlan, plan_id)

@@ -1,7 +1,7 @@
 import {
-  Alert, Button, Card, Collapse, Descriptions, Empty, Input, List, Segmented, Space, Steps, Tag, Typography, message,
+  Alert, AutoComplete, Button, Card, Collapse, Descriptions, Empty, Input, List, Segmented, Space, Steps, Tag, Typography, message,
 } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Asset, type Plan, type PlanClip } from "./api";
 
 const SECTION_LABEL: Record<string, string> = {
@@ -110,6 +110,8 @@ function ReviseBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
 function MusicBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
+  const [library, setLibrary] = useState<{ path: string; filename: string; duration: number }[]>([]);
+  useEffect(() => { api.musicLibrary().then((r) => setLibrary(r.tracks)).catch(() => {}); }, []);
   const tracks = (plan.ir as { tracks?: { type: string; items?: unknown[] }[] } | null)?.tracks ?? [];
   const hasMusic = tracks.some((t) => t.type === "audio" && (t.items?.length ?? 0) > 0);
   const submit = async () => {
@@ -126,16 +128,33 @@ function MusicBox({ plan, refresh }: { plan: Plan; refresh: () => void }) {
       setBusy(false);
     }
   };
+  const recommend = async () => {
+    setBusy(true);
+    try {
+      const r = await api.recommendMusic(plan.id);
+      message.success(`已配乐：${r.music} —— ${r.reason}`, 6);
+      refresh();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <Space.Compact style={{ width: "100%" }}>
-      <Input
-        placeholder="配乐文件绝对路径（mp3/wav/m4a），自动循环截齐并淡入淡出"
+      <AutoComplete
+        style={{ flex: 1 }}
+        placeholder="从曲库选择（data/music），或输入音乐文件绝对路径"
         value={path}
-        onChange={(e) => setPath(e.target.value)}
-        onPressEnter={submit}
-        prefix={hasMusic ? <Tag color="gold">已配乐</Tag> : undefined}
-      />
-      <Button onClick={submit} loading={busy}>设置配乐</Button>
+        onChange={setPath}
+        options={library.map((t) => ({
+          value: t.path, label: `${t.filename}（${Math.round(t.duration)}s）`,
+        }))}
+      >
+        <Input prefix={hasMusic ? <Tag color="gold">已配乐</Tag> : undefined} onPressEnter={submit} />
+      </AutoComplete>
+      <Button onClick={submit} loading={busy}>设置</Button>
+      <Button type="primary" ghost onClick={recommend} loading={busy}>AI 推荐</Button>
       {hasMusic && (
         <Button danger
           onClick={() => api.removeMusic(plan.id)

@@ -172,6 +172,13 @@ export const api = {
       method: "PUT", body: JSON.stringify({ path }),
     }),
   removeMusic: (id: number) => request(`/api/plans/${id}/music`, { method: "DELETE" }),
+  musicLibrary: () =>
+    request<{ tracks: { id: number; path: string; filename: string; duration: number }[] }>("/api/music"),
+  scanMusic: () => request<{ added: number; total: number }>("/api/music/scan", { method: "POST" }),
+  recommendMusic: (id: number, mood?: string) =>
+    request<{ music: string; reason: string }>(`/api/plans/${id}/music/recommend`, {
+      method: "POST", body: JSON.stringify({ mood }),
+    }),
   setOutput: (id: number, aspect: string, fill = "blur") =>
     request<{ render: { width: number; height: number; fill: string } }>(
       `/api/plans/${id}/output`,

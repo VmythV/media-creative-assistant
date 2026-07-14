@@ -146,3 +146,12 @@
 - [x] 对话：set_output_spec 意图（白名单+提示词），能力边界清单移除"竖屏切换"
 - [x] 前端：方案卡画幅选择（跟随素材/16:9/9:16/1:1）；成片卡显示分辨率
 - [x] M13 验证：pytest 5 项通过（58 passed 全量）；真实对话"改成竖屏发抖音用重新渲染"→ set_output_spec(9:16)+render 自动串联，成片 1080×1920，抽帧确认模糊背景居中构图
+
+## M14 BGM 推荐与音乐库（phase2-roadmap §3）
+
+- [x] MusicTrack 表 + 曲库扫描（data/music 默认目录，ffprobe 时长/响度，失效清理）
+- [x] 推荐：LLM 受限格式从曲库选曲（id 白名单校验，注入用户偏好，失败确定性兜底）
+- [x] API：GET /api/music、POST /api/music/scan、POST /plans/{id}/music/recommend
+- [x] 对话：set_music 的 mood 参数走推荐（结果带理由）
+- [x] 前端：配乐框升级（曲库 AutoComplete + AI 推荐按钮 + 手动路径兜底 + 理由展示）
+- [x] M14 验证：pytest 3 项通过（61 passed 全量）；真实对话"换首更安静的音乐"→ 从 3 首曲库精准选中宁静古筝（理由引用了用户偏好记忆）并自动重渲

@@ -13,6 +13,7 @@ from app.api.capabilities import router as capabilities_router
 from app.api.chat import router as chat_router
 from app.api.execute import router as execute_router
 from app.api.memory import router as memory_router
+from app.api.music import router as music_router
 from app.api.plans import router as plans_router
 from app.capability.discovery import discover_capabilities
 from app.store.db import get_engine
@@ -51,6 +52,7 @@ app.include_router(plans_router, prefix="/api")
 app.include_router(execute_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(music_router, prefix="/api")
 
 
 @app.get("/api/health")
