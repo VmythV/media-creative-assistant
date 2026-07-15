@@ -430,6 +430,23 @@ def remove_music(plan_id: int, db: Session = Depends(get_db)) -> dict:
     return {"plan_id": plan_id, "music": None}
 
 
+class EditClipsRequest(BaseModel):
+    ops: list[dict]
+
+
+@router.post("/plans/{plan_id}/edit-clips")
+def edit_clips(plan_id: int, req: EditClipsRequest, db: Session = Depends(get_db)) -> dict:
+    """片段级精确修订（M22）：确定性局部操作 → 新方案行（带 diff，可回滚）。"""
+    from app.runtime.clip_ops import apply_clip_ops
+
+    if db.get(EditPlan, plan_id) is None:
+        raise HTTPException(404, "方案不存在")
+    try:
+        return apply_clip_ops(plan_id, req.ops)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 class PublishKitRequest(BaseModel):
     platform: str = "抖音"
 

@@ -215,3 +215,12 @@
 - [x] 发布文案包：LLM 受限格式生成标题/简介/话题标签（长度/数量确定性钳制，注入用户偏好），存 plan.publish
 - [x] API：POST /plans/{id}/publish-kit {platform?}；对话 publish_kit 意图；方案卡发布文案卡（可复制/重新生成）
 - [x] M21 验证：pytest 3 项通过（82 passed 全量，含渲染进度事件断言）；真实走查："发抖音帮我写标题简介标签"→《二十秒，把江南装进梦里》+ 简介 + 5 个话题标签，风格承接偏好记忆
+
+## M22 片段级修订（backlog B2）
+
+- [x] clip_ops 核心：trim/remove/move/subtitle/transition/replace 六种确定性局部操作（按序执行，位置基于当前列表）
+- [x] replace 从未用过的精彩片段确定性选取（hint 关键词过滤 + 评分最高，保持原片段时长与角色）
+- [x] 产出新方案行（revised_from + [精确修改] 指令描述 + diff，保留回滚），plan_to_ir 重建 IR 全量校验
+- [x] API：POST /plans/{id}/edit-clips；对话 edit_clips 意图（op 词汇表入提示词，与 revise_plan 分工：精确局部 vs 模糊大改）
+- [x] 状态简报补当前方案片段清单（走查发现"最后一段"在 16 段方案里被猜成 5——position 现以清单锚定）
+- [x] M22 验证：pytest 4 项通过（86 passed 全量）；真实走查：一句话三操作（调序/改字幕/改转场）秒级完成，"最后一段"精准命中片段 16
