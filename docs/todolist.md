@@ -224,3 +224,11 @@
 - [x] API：POST /plans/{id}/edit-clips；对话 edit_clips 意图（op 词汇表入提示词，与 revise_plan 分工：精确局部 vs 模糊大改）
 - [x] 状态简报补当前方案片段清单（走查发现"最后一段"在 16 段方案里被猜成 5——position 现以清单锚定）
 - [x] M22 验证：pytest 4 项通过（86 passed 全量）；真实走查：一句话三操作（调序/改字幕/改转场）秒级完成，"最后一段"精准命中片段 16
+
+## M23 成片自检闭环（backlog B1）
+
+- [x] 确定性检查：时长偏差（vs target_duration）、黑场（blackdetect）、响度异常（静音/削波）、重复素材区间
+- [x] 视觉自检：成片均匀抽帧回喂视觉模型（受限格式 issues：类型/严重度/建议），一次多图调用，失败不阻断确定性报告
+- [x] 报告合成：verdict（pass/needs_improvement/has_problems）+ issues + 可执行建议，存 plan.review
+- [x] API：POST /plans/{id}/review；对话 review_video 意图（19 种）；成片卡自检结果展示
+- [x] M23 验证：pytest 2 项通过（88 passed 全量，瑕疵成片夹具验证黑场/静音/偏差/重复全命中）；真实走查：AI 审查自己的竖屏成片，指出时长偏差 23%、模糊填充占比过高、第3/5帧构图雷同，每条带可执行建议

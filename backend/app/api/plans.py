@@ -447,6 +447,19 @@ def edit_clips(plan_id: int, req: EditClipsRequest, db: Session = Depends(get_db
         raise HTTPException(400, str(e)) from e
 
 
+@router.post("/plans/{plan_id}/review")
+async def review_plan_render(plan_id: int, db: Session = Depends(get_db)) -> dict:
+    """成片自检（M23）：确定性检查 + 视觉回喂，报告存 plan.review。"""
+    from app.runtime.review import review_render
+
+    if db.get(EditPlan, plan_id) is None:
+        raise HTTPException(404, "方案不存在")
+    try:
+        return {"plan_id": plan_id, "review": await review_render(plan_id)}
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 class PublishKitRequest(BaseModel):
     platform: str = "抖音"
 

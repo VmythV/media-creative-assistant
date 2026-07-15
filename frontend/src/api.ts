@@ -46,6 +46,7 @@ export interface Plan {
     revision_instruction?: string;
     diff?: PlanDiff;
     publish?: PublishKit;
+    review?: ReviewReport;
   };
   ir: Record<string, unknown> | null;
   created_at: string;
@@ -70,6 +71,12 @@ export interface ExecutionResult {
     music?: { file: string; method: string; track?: number } | null;
   };
   artifacts: Record<string, string>;
+}
+
+export interface ReviewReport {
+  verdict: string; // pass / needs_improvement / has_problems
+  issues: { type: string; severity: string; detail: string; suggestion?: string }[];
+  summary: string;
 }
 
 export interface PublishKit {
@@ -214,6 +221,8 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ aspect, fill }) },
     ),
   resetOutput: (id: number) => request(`/api/plans/${id}/output`, { method: "DELETE" }),
+  reviewRender: (id: number) =>
+    request<{ review: ReviewReport }>(`/api/plans/${id}/review`, { method: "POST" }),
   publishKit: (id: number, platform = "抖音") =>
     request<{ publish: PublishKit }>(`/api/plans/${id}/publish-kit`, {
       method: "POST", body: JSON.stringify({ platform }),

@@ -261,6 +261,46 @@ function RenderCard({ plan }: { plan: Plan }) {
   );
 }
 
+const VERDICT_META: Record<string, { color: string; text: string }> = {
+  pass: { color: "success", text: "通过" },
+  needs_improvement: { color: "warning", text: "可改进" },
+  has_problems: { color: "error", text: "有问题" },
+};
+
+function ReviewCard({ plan, refresh }: { plan: Plan; refresh: () => void }) {
+  const review = plan.plan.review;
+  const [busy, setBusy] = useState(false);
+  if (!plan.plan.render?.video_url) return null;
+  const run = () => {
+    setBusy(true);
+    api.reviewRender(plan.id)
+      .then(() => { message.success("自检完成"); refresh(); })
+      .catch((e) => message.error(String(e)))
+      .finally(() => setBusy(false));
+  };
+  if (!review) {
+    return <Button size="small" onClick={run} loading={busy}>成片自检（AI 审片）</Button>;
+  }
+  const meta = VERDICT_META[review.verdict] ?? VERDICT_META.needs_improvement;
+  return (
+    <Card size="small" title={<Space><span>成片自检</span><Tag color={meta.color}>{meta.text}</Tag></Space>}
+      extra={<Button size="small" type="text" onClick={run} loading={busy}>重新检查</Button>}>
+      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+        <Typography.Text type="secondary">{review.summary}</Typography.Text>
+        {review.issues.map((it, i) => (
+          <Typography.Text key={i}>
+            <Tag color={it.severity === "high" ? "red" : it.severity === "medium" ? "orange" : "default"}>
+              {it.severity}
+            </Tag>
+            {it.detail}
+            {it.suggestion && <Typography.Text type="secondary">（{it.suggestion}）</Typography.Text>}
+          </Typography.Text>
+        ))}
+      </Space>
+    </Card>
+  );
+}
+
 function PublishCard({ plan, refresh }: { plan: Plan; refresh: () => void }) {
   const kit = plan.plan.publish;
   const [busy, setBusy] = useState(false);
@@ -454,6 +494,7 @@ export function PlanPanel({
                 )}
                 <DiffCard plan={p} />
                 <RenderCard plan={p} />
+                <ReviewCard plan={p} refresh={refresh} />
                 <PublishCard plan={p} refresh={refresh} />
                 <ExecutionCard plan={p} />
               </Space>
