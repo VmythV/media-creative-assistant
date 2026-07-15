@@ -41,19 +41,27 @@ def export_fcpxml_tool(ir: dict) -> dict:
         "properties": {
             "ir": {"type": "object", "description": "Editing IR JSON"},
             "output_dir": {"type": "string", "description": "成片输出目录绝对路径"},
+            "progress_plan_id": {"type": "integer", "description": "可选：进度事件挂靠的方案 id（SSE render 频道）"},
         },
         "required": ["ir", "output_dir"],
     },
 )
-async def render_video_tool(ir: dict, output_dir: str) -> dict:
+async def render_video_tool(ir: dict, output_dir: str, progress_plan_id: int | None = None) -> dict:
     import asyncio
     from pathlib import Path
 
     from app.ir.renderer import render_video
 
     parsed = validate_ir(ir)  # 渲染依赖源文件，必须校验路径存在
+    progress = None
+    if progress_plan_id is not None:  # 片段级进度透传（M21）
+        from app.runtime.events import bus
+
+        def progress(step: str, detail: str) -> None:
+            bus.publish("render", {"plan_id": progress_plan_id, "step": step, "detail": detail})
+
     # 渲染耗时长（多次 ffmpeg 编码），放线程池避免阻塞事件循环
-    return await asyncio.to_thread(render_video, parsed, Path(output_dir))
+    return await asyncio.to_thread(render_video, parsed, Path(output_dir), progress=progress)
 
 
 @registry.register(

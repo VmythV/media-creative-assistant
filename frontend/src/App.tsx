@@ -78,7 +78,7 @@ export default function App() {
             {
               key: "chat",
               label: "对话",
-              children: <ChatPanel refresh={refresh} />,
+              children: <ChatPanel refresh={refresh} events={events} />,
             },
             {
               key: "assets",

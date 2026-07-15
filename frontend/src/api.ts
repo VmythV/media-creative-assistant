@@ -45,6 +45,7 @@ export interface Plan {
     revised_from?: number;
     revision_instruction?: string;
     diff?: PlanDiff;
+    publish?: PublishKit;
   };
   ir: Record<string, unknown> | null;
   created_at: string;
@@ -69,6 +70,13 @@ export interface ExecutionResult {
     music?: { file: string; method: string; track?: number } | null;
   };
   artifacts: Record<string, string>;
+}
+
+export interface PublishKit {
+  title: string;
+  description: string;
+  hashtags: string[];
+  platform: string;
 }
 
 export interface PlanDiff {
@@ -206,6 +214,10 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ aspect, fill }) },
     ),
   resetOutput: (id: number) => request(`/api/plans/${id}/output`, { method: "DELETE" }),
+  publishKit: (id: number, platform = "抖音") =>
+    request<{ publish: PublishKit }>(`/api/plans/${id}/publish-kit`, {
+      method: "POST", body: JSON.stringify({ platform }),
+    }),
   logs: () => request<{ logs: LogEntry[] }>("/api/logs"),
   tasks: () => request<{ tasks: BackgroundTask[] }>("/api/tasks"),
   chat: (message: string, session_id?: string | null) =>

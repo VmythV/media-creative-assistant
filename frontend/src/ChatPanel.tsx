@@ -1,6 +1,6 @@
 import { Alert, Button, Card, Input, Space, Spin, Tag, Typography, message } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ChatMessage } from "./api";
+import { api, type AppEvent, type ChatMessage } from "./api";
 
 const INTENT_LABEL: Record<string, string> = {
   create_plan: "生成方案", revise_plan: "修订方案", confirm_plan: "确认方案",
@@ -8,6 +8,7 @@ const INTENT_LABEL: Record<string, string> = {
   execute: "生成 Resolve 时间线", import_assets: "导入素材", analyze_assets: "分析素材",
   set_output_spec: "切换输出画幅", set_subtitle_style: "字幕样式", generate_voiceover: "AI 配音",
   learn_style: "学习风格", apply_style: "应用风格", clear_style: "取消风格",
+  publish_kit: "发布文案",
 };
 const STATUS_META: Record<string, { color: string; text: string }> = {
   pending: { color: "processing", text: "执行中" },
@@ -17,30 +18,61 @@ const STATUS_META: Record<string, { color: string; text: string }> = {
   invalid: { color: "warning", text: "已拒绝" },
 };
 
-function ActionCard({ m }: { m: ChatMessage }) {
+const PROGRESS_TYPES = new Set(["analysis", "render", "execute", "plan", "chat"]);
+
+function ActionCard({ m, progress }: { m: ChatMessage; progress?: string }) {
   const meta = STATUS_META[m.status ?? "pending"] ?? STATUS_META.pending;
   const detail = m.error
     ? m.error
     : m.result
-      ? Object.entries(m.result).filter(([, v]) => v != null)
+      ? Object.entries(m.result)
+          .filter(([k, v]) => v != null && !["title", "description", "hashtags"].includes(k))
           .map(([k, v]) => `${k}: ${v}`).join(" · ")
       : "";
+  const kit = m.result && m.result.hashtags != null ? m.result : null;
   return (
     <Card size="small" style={{ background: "#fafafa" }}>
-      <Space wrap>
-        <Tag color={meta.color}>{meta.text}</Tag>
-        <Typography.Text strong>{INTENT_LABEL[m.intent ?? ""] ?? m.intent}</Typography.Text>
-        {m.status === "pending" && <Spin size="small" />}
-        {detail && <Typography.Text type="secondary">{detail}</Typography.Text>}
-        {m.result?.video_url != null && (
-          <a href={encodeURI(String(m.result.video_url))} target="_blank" rel="noreferrer">播放成片</a>
+      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+        <Space wrap>
+          <Tag color={meta.color}>{meta.text}</Tag>
+          <Typography.Text strong>{INTENT_LABEL[m.intent ?? ""] ?? m.intent}</Typography.Text>
+          {m.status === "pending" && <Spin size="small" />}
+          {detail && <Typography.Text type="secondary">{detail}</Typography.Text>}
+        </Space>
+        {m.status === "pending" && progress && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>⏳ {progress}</Typography.Text>
+        )}
+        {m.result?.video_url != null && m.status === "done" && (
+          <video
+            controls preload="metadata"
+            style={{ width: "100%", maxHeight: 360, background: "#000", borderRadius: 6 }}
+            src={encodeURI(String(m.result.video_url))}
+          />
+        )}
+        {kit != null && (
+          <Space direction="vertical" size={2}>
+            <Typography.Text strong copyable>{String(kit.title)}</Typography.Text>
+            <Typography.Text copyable>{String(kit.description)}</Typography.Text>
+            <Space wrap>
+              {(kit.hashtags as string[]).map((h) => <Tag key={h} color="blue">#{h}</Tag>)}
+            </Space>
+          </Space>
         )}
       </Space>
     </Card>
   );
 }
 
-export function ChatPanel({ refresh }: { refresh: () => void }) {
+export function ChatPanel({ refresh, events }: { refresh: () => void; events: AppEvent[] }) {
+  const latestProgress = (() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (PROGRESS_TYPES.has(e.type) && e.detail != null) {
+        return `${String(e.step ?? e.type)}：${String(e.detail)}`;
+      }
+    }
+    return undefined;
+  })();
   const [sessionId, setSessionId] = useState<string | null>(
     () => localStorage.getItem("mca_chat_session"),
   );
@@ -95,7 +127,7 @@ export function ChatPanel({ refresh }: { refresh: () => void }) {
       <div style={{ minHeight: 320, maxHeight: 480, overflowY: "auto", padding: 8 }}>
         <Space direction="vertical" size="small" style={{ width: "100%" }}>
           {messages.map((m, i) => {
-            if (m.role === "action") return <ActionCard key={i} m={m} />;
+            if (m.role === "action") return <ActionCard key={i} m={m} progress={latestProgress} />;
             const isUser = m.role === "user";
             return (
               <div key={i} style={{ textAlign: isUser ? "right" : "left" }}>

@@ -207,3 +207,11 @@
 - [x] 渲染速度档位：RenderSpec.quality（draft=veryfast/crf23，final=medium/crf18），API/对话 set_output_spec 可设（"快速出个样片"）
 - [x] M20(a) 验证：pytest 5 项通过（79 passed 全量，含并发计时断言）；真实 6 镜头素材实测：并发 4 → 58s vs 串行 89s（视觉部分 ~26s vs ~78s，镜头越多收益越大）
 - [ ] M20(b) 真实素材验收：待用户提供真实拍摄视频目录，从零走全链路记录摩擦点
+
+## M21 对话体验补全：内嵌预览/实时进度 + 发布文案包（backlog B11+B12）
+
+- [x] 对话动作卡内嵌 <video> 成片预览（替代纯链接）
+- [x] SSE 进度透传到动作卡（分析/渲染/执行的 step+detail 实时显示）；渲染工具补片段级进度事件（progress_plan_id）
+- [x] 发布文案包：LLM 受限格式生成标题/简介/话题标签（长度/数量确定性钳制，注入用户偏好），存 plan.publish
+- [x] API：POST /plans/{id}/publish-kit {platform?}；对话 publish_kit 意图；方案卡发布文案卡（可复制/重新生成）
+- [x] M21 验证：pytest 3 项通过（82 passed 全量，含渲染进度事件断言）；真实走查："发抖音帮我写标题简介标签"→《二十秒，把江南装进梦里》+ 简介 + 5 个话题标签，风格承接偏好记忆

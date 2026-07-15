@@ -430,6 +430,31 @@ def remove_music(plan_id: int, db: Session = Depends(get_db)) -> dict:
     return {"plan_id": plan_id, "music": None}
 
 
+class PublishKitRequest(BaseModel):
+    platform: str = "抖音"
+
+
+@router.post("/plans/{plan_id}/publish-kit")
+async def create_publish_kit(plan_id: int, req: PublishKitRequest | None = None,
+                             db: Session = Depends(get_db)) -> dict:
+    """发布文案包（M21）：标题/简介/话题标签，存 plan.publish。"""
+    from app.runtime.publish import generate_publish_kit
+
+    req = req or PublishKitRequest()
+    plan = db.get(EditPlan, plan_id)
+    if plan is None:
+        raise HTTPException(404, "方案不存在")
+    if not plan.plan.get("clips"):
+        raise HTTPException(400, "方案没有内容，无法生成文案")
+    try:
+        kit = await generate_publish_kit(dict(plan.plan), req.platform)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"文案生成失败: {e}") from e
+    plan.plan = {**plan.plan, "publish": kit}
+    db.commit()
+    return {"plan_id": plan_id, "publish": kit}
+
+
 @router.post("/plans/{plan_id}/confirm")
 def confirm_plan(plan_id: int, db: Session = Depends(get_db)) -> dict:
     plan = db.get(EditPlan, plan_id)

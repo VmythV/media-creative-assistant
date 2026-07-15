@@ -261,6 +261,32 @@ function RenderCard({ plan }: { plan: Plan }) {
   );
 }
 
+function PublishCard({ plan, refresh }: { plan: Plan; refresh: () => void }) {
+  const kit = plan.plan.publish;
+  const [busy, setBusy] = useState(false);
+  if (!plan.plan.clips) return null;
+  const generate = () => {
+    setBusy(true);
+    api.publishKit(plan.id)
+      .then(() => { message.success("发布文案已生成"); refresh(); })
+      .catch((e) => message.error(String(e)))
+      .finally(() => setBusy(false));
+  };
+  if (!kit) {
+    return <Button size="small" onClick={generate} loading={busy}>生成发布文案</Button>;
+  }
+  return (
+    <Card size="small" title={`发布文案（${kit.platform}）`}
+      extra={<Button size="small" type="text" onClick={generate} loading={busy}>重新生成</Button>}>
+      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+        <Typography.Text strong copyable>{kit.title}</Typography.Text>
+        <Typography.Text copyable>{kit.description}</Typography.Text>
+        <Space wrap>{kit.hashtags.map((h) => <Tag key={h} color="blue">#{h}</Tag>)}</Space>
+      </Space>
+    </Card>
+  );
+}
+
 function ExecutionCard({ plan }: { plan: Plan }) {
   const exec = plan.plan.execution;
   if (!exec) return null;
@@ -428,6 +454,7 @@ export function PlanPanel({
                 )}
                 <DiffCard plan={p} />
                 <RenderCard plan={p} />
+                <PublishCard plan={p} refresh={refresh} />
                 <ExecutionCard plan={p} />
               </Space>
             ),

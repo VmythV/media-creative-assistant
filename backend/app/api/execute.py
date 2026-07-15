@@ -172,7 +172,8 @@ async def run_render(plan_id: int, ir_dict: dict, *, engine: str = "ffmpeg") -> 
                       "note": "Resolve 渲染成片不含字幕（字幕请用默认引擎或在 Resolve 内上轨后手动渲染）"}
         else:
             result = await registry.execute(
-                "render_video", {"ir": ir_dict, "output_dir": str(out_dir)}
+                "render_video",
+                {"ir": ir_dict, "output_dir": str(out_dir), "progress_plan_id": plan_id},
             )
             if result.error:
                 raise RuntimeError(result.error)
