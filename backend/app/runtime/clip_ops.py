@@ -15,7 +15,7 @@ from app.store.models import EditPlan
 
 logger = logging.getLogger("mca.clip_ops")
 
-CLIP_OPS = {"trim", "remove", "move", "subtitle", "transition", "replace"}
+CLIP_OPS = {"trim", "remove", "move", "subtitle", "transition", "replace", "speed"}
 
 
 def _at(clips: list[dict], position: int) -> dict:
@@ -68,6 +68,21 @@ def _op_subtitle(clips, op) -> str:
     text = (op.get("text") or "").strip()
     c["subtitle"] = text or None
     return f"片段{op['position']} 字幕改为「{text or '（清除）'}」"
+
+
+def _op_speed(clips, op) -> str:
+    c = _at(clips, op["position"])
+    try:
+        speed = float(op.get("speed"))
+    except (TypeError, ValueError) as e:
+        raise ValueError("speed 需要数值（>1 快放、<1 慢动作）") from e
+    speed = min(max(speed, 0.25), 4.0)
+    if abs(speed - 1.0) < 0.01:  # 恢复原速
+        c.pop("speed", None)
+        return f"片段{op['position']} 恢复原速"
+    c["speed"] = round(speed, 3)
+    label = "慢动作" if speed < 1 else "快放"
+    return f"片段{op['position']} {label} {speed}x"
 
 
 def _op_transition(clips, op) -> str:
@@ -155,6 +170,8 @@ def apply_clip_ops(base_plan_id: int, ops: list[dict]) -> dict:
             changes.append(_op_subtitle(clips, op))
         elif kind == "transition":
             changes.append(_op_transition(clips, op))
+        elif kind == "speed":
+            changes.append(_op_speed(clips, op))
         elif kind == "replace":
             changes.append(_op_replace(clips, op, analyzed))
         else:

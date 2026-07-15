@@ -142,7 +142,7 @@ def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
     clips_ir = []
     subtitles_ir = []
     timeline_pos = 0.0
-    prev_len = 0.0
+    prev_tl_len = 0.0
 
     for clip in plan.get("clips", []):
         aid = clip["asset_id"]
@@ -153,8 +153,10 @@ def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
             used_ids.append(aid)
         start = max(0.0, float(clip["start"]))
         end = min(float(clip["end"]), asset.duration or float(clip["end"]))
-        clip_len = end - start
-        transition = _clamp_transition(clip.get("transition"), prev_len, clip_len)
+        speed = min(max(float(clip.get("speed") or 1.0), 0.25), 4.0)
+        tl_len = (end - start) / speed  # 时间线时长（变速后）
+        # 转场消耗时间线重叠，按时间线时长钳制
+        transition = _clamp_transition(clip.get("transition"), prev_tl_len, tl_len)
         clip_ir = {
             "type": "clip",
             "source_id": f"src_{aid}",
@@ -164,9 +166,11 @@ def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
         }
         if transition:
             clip_ir["transition"] = transition
+        if speed != 1.0:
+            clip_ir["speed"] = round(speed, 3)
         clips_ir.append(clip_ir)
         # 字幕占片段的"独占时间槽"：转场重叠期间沿用上一条字幕，新字幕从转场结束起显示
-        effective_len = clip_len - (transition["duration"] if transition else 0.0)
+        effective_len = tl_len - (transition["duration"] if transition else 0.0)
         if clip.get("subtitle"):
             subtitles_ir.append(
                 {
@@ -177,7 +181,7 @@ def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
                 }
             )
         timeline_pos += effective_len
-        prev_len = clip_len
+        prev_tl_len = tl_len
 
     first = assets_by_id[used_ids[0]] if used_ids else None
     tracks: list[dict] = [{"type": "video", "index": 1, "items": clips_ir}]
@@ -377,6 +381,8 @@ def diff_plans(old: dict, new: dict) -> dict:
             details.append(f"字幕「{oc.get('subtitle') or '无'}」→「{nc.get('subtitle') or '无'}」")
         if _transition_desc(oc) != _transition_desc(nc):
             details.append(f"转场 {_transition_desc(oc)} → {_transition_desc(nc)}")
+        if float(oc.get("speed") or 1.0) != float(nc.get("speed") or 1.0):
+            details.append(f"变速 {float(oc.get('speed') or 1.0)}x → {float(nc.get('speed') or 1.0)}x")
         if best != ni:
             details.append(f"位置 {best + 1} → {ni + 1}")
         if details:

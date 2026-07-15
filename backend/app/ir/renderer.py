@@ -75,20 +75,34 @@ def _encode_args(ir: EditingIR) -> list[str]:
 
 
 def _compose_graph(w: int, h: int, fill: str, fps: float) -> str:
-    """单片段归一化滤镜图：目标画幅 + 构图策略（设计文档 phase2 §2）。"""
+    """单片段归一化滤镜图：目标画幅 + 构图策略（设计文档 phase2 §2）。产出 [vc]。"""
     if fill == "crop":
         return (f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
-                f"crop={w}:{h},fps={fps},format=yuv420p[vout]")
+                f"crop={w}:{h},fps={fps},format=yuv420p[vc]")
     if fill == "blur":
         return (
             f"[0:v]split[bg][fg];"
             f"[bg]scale={w}:{h}:force_original_aspect_ratio=increase,"
             f"crop={w}:{h},boxblur=20:2[bgb];"
             f"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fgs];"
-            f"[bgb][fgs]overlay=(W-w)/2:(H-h)/2,fps={fps},format=yuv420p[vout]"
+            f"[bgb][fgs]overlay=(W-w)/2:(H-h)/2,fps={fps},format=yuv420p[vc]"
         )
     return (f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
-            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p[vout]")
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p[vc]")
+
+
+def _atempo_chain(speed: float) -> str:
+    """变速音频滤镜链（M25）：把 speed 分解到 atempo 有效范围 [0.5, 2.0] 内的乘积。"""
+    factors: list[float] = []
+    s = speed
+    while s < 0.5:
+        factors.append(0.5)
+        s /= 0.5
+    while s > 2.0:
+        factors.append(2.0)
+        s /= 2.0
+    factors.append(round(s, 4))
+    return ",".join(f"atempo={f}" for f in factors)
 
 
 def _subtitle_pngs(ir: EditingIR, out_dir: Path) -> list[tuple[Path, float, float]]:
@@ -172,24 +186,34 @@ def render_video(
     fps = ir.project.fps
 
     # 1) 各片段 trim 并统一到交付规格（含统一音轨，无音轨补静音，保证 concat 一致）
-    graph = _compose_graph(w, h, fill, fps)
+    #    变速（M25）：视频 setpts、音频 atempo，使片段时间线时长 = 素材段长 / speed
+    compose = _compose_graph(w, h, fill, fps)
     seg_paths = []
     for i, clip in enumerate(clips, start=1):
         src = src_map[clip.source_id]
         dur = clip.trim.end - clip.trim.start
+        speed = clip.speed
         seg = seg_dir / f"seg_{i:03d}.mp4"
+        has_audio = _has_audio(src.path)
+        a_in = "0:a:0" if has_audio else "1:a:0"
+        # setpts 变速会保留原帧数（改变有效帧率），再用 fps 重采样回定帧率，否则 xfade 帧率不一致会失败
+        v_stage = f"[vc]setpts=PTS/{speed},fps={fps}[vout]" if speed != 1.0 else "[vc]null[vout]"
+        fc = f"{compose};{v_stage}"
+        if speed != 1.0:
+            fc += f";[{a_in}]{_atempo_chain(speed)}[aout]"
+            a_map = "[aout]"
+        else:
+            a_map = a_in
         cmd = ["ffmpeg", "-y", "-v", "error",
                "-ss", str(clip.trim.start), "-to", str(clip.trim.end), "-i", src.path]
-        if _has_audio(src.path):
-            cmd += ["-filter_complex", graph, "-map", "[vout]", "-map", "0:a:0"]
-        else:
-            cmd += ["-f", "lavfi", "-t", str(dur), "-i", "anullsrc=r=48000:cl=stereo",
-                    "-filter_complex", graph, "-map", "[vout]", "-map", "1:a:0"]
-        cmd += [*_encode_args(ir),
-                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(seg)]
+        if not has_audio:
+            cmd += ["-f", "lavfi", "-t", str(dur), "-i", "anullsrc=r=48000:cl=stereo"]
+        cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", a_map,
+                *_encode_args(ir), "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(seg)]
         _run(cmd)
         seg_paths.append(seg)
-        emit("segment", f"{i}/{len(clips)} {Path(src.path).name}")
+        spd = f" @{speed}x" if speed != 1.0 else ""
+        emit("segment", f"{i}/{len(clips)} {Path(src.path).name}{spd}")
 
     # 2) 拼接：无转场走 concat 流复制快路径；有转场单次 filter_complex 链式折叠（设计文档 §12）
     merged = seg_dir / "merged.mp4"
@@ -201,7 +225,7 @@ def render_video(
               "-i", str(concat_list), "-c", "copy", str(merged)])
         emit("concat", f"{len(seg_paths)} 个片段合并完成")
     else:
-        durs = [c.trim.end - c.trim.start for c in clips]
+        durs = [c.timeline_len for c in clips]  # 段文件已变速，用时间线时长算 xfade offset
         cmd = ["ffmpeg", "-y", "-v", "error"]
         for p in seg_paths:
             cmd += ["-i", str(p)]
@@ -287,5 +311,6 @@ def render_video(
         "subtitles_burned": subtitles_burned,
         "clips": len(clips),
         "transitions": sum(1 for c in clips if c.transition),
+        "speed_clips": sum(1 for c in clips if c.speed != 1.0),
         "music": Path(src_map[music.source_id].path).name if music else None,
     }

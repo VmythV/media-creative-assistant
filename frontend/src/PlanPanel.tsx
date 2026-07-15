@@ -42,6 +42,9 @@ function ClipList({ clips, assets }: { clips: PlanClip[]; assets: Asset[] }) {
               <Tag color={SECTION_COLOR[c.section]}>{SECTION_LABEL[c.section] ?? c.section}</Tag>
               <Typography.Text strong>{nameOf(c.asset_id)}</Typography.Text>
               <Tag>{c.start.toFixed(1)}s - {c.end.toFixed(1)}s（{(c.end - c.start).toFixed(1)}s）</Tag>
+              {c.speed != null && c.speed !== 1 && (
+                <Tag color="magenta">{c.speed < 1 ? "慢动作" : "快放"} {c.speed}x</Tag>
+              )}
               {c.subtitle && <Tag color="cyan">字幕：{c.subtitle}</Tag>}
             </Space>
             <Typography.Text type="secondary">{c.reason}</Typography.Text>
@@ -372,6 +375,11 @@ function ExecutionCard({ plan }: { plan: Plan }) {
             {exec.resolve.transitions?.method === "unsupported" && (
               <Descriptions.Item label="转场">
                 {exec.resolve.transitions.count} 处转场需在 Resolve 内手动添加（脚本 API 限制）；渲染成片含完整转场
+              </Descriptions.Item>
+            )}
+            {exec.resolve.speed?.method === "unsupported" && (
+              <Descriptions.Item label="变速">
+                {exec.resolve.speed.clips}：Resolve 时间线为原速，请在检查器手动 Retime；渲染成片含完整变速
               </Descriptions.Item>
             )}
             {exec.resolve.music && (

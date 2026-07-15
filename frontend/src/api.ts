@@ -60,6 +60,7 @@ export interface PlanClip {
   reason: string;
   subtitle: string | null;
   transition?: { type: string; duration: number } | null;
+  speed?: number;
 }
 
 export interface ExecutionResult {
@@ -68,6 +69,7 @@ export interface ExecutionResult {
     project: string; timeline: string; clips: number;
     subtitles: Record<string, unknown>;
     transitions?: { count: number; method: string } | null;
+    speed?: { count: number; method: string; clips: string } | null;
     music?: { file: string; method: string; track?: number } | null;
   };
   artifacts: Record<string, string>;

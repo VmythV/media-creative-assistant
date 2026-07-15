@@ -85,6 +85,14 @@ def execute_ir(ir: EditingIR, *, progress=None) -> dict:
     subtitle_result = _add_subtitles(media_pool, timeline, ir, report)
     music_result = _place_music(media_pool, timeline, ir, report)
 
+    # 变速（M25）：脚本 API 无法可靠设置片段 retime，Resolve 时间线为原速，仅体现在渲染成片
+    speed_clips = [(i, c.speed) for i, c in enumerate(clips, 1) if c.speed != 1.0]
+    speed_result = None
+    if speed_clips:
+        detail = "、".join(f"第{i}段 {s}x" for i, s in speed_clips)
+        speed_result = {"count": len(speed_clips), "method": "unsupported", "clips": detail}
+        report("speed", f"{detail} 变速仅体现在渲染成片；Resolve 时间线为原速，请在检查器手动 Retime")
+
     pm.SaveProject()
     return {
         "project": project_name,
@@ -93,6 +101,7 @@ def execute_ir(ir: EditingIR, *, progress=None) -> dict:
         "subtitles": subtitle_result,
         "music": music_result,
         "transitions": transitions_result,
+        "speed": speed_result,
     }
 
 

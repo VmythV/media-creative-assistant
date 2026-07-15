@@ -56,18 +56,19 @@ def export_edit_list(ir: EditingIR) -> str:
             continue
         for i, clip in enumerate(track.items, start=1):
             src = src_map.get(clip.source_id)
-            clip_len = clip.trim.end - clip.trim.start
+            tl_len = clip.timeline_len
             t_in = clip.transition.duration if clip.transition else 0.0
             trans = f"（{clip.transition.type} {t_in:.1f}s 转场进入）" if clip.transition else ""
+            spd = f"（{'慢动作' if clip.speed < 1 else '快放'} {clip.speed}x）" if clip.speed != 1.0 else ""
             lines.append(
                 f"{i}. **[{ROLE_LABELS.get(clip.role, clip.role)}]** "
                 f"{Path(src.path).name if src else clip.source_id} "
-                f"[{clip.trim.start:.1f}s → {clip.trim.end:.1f}s]（{clip_len:.1f}s，"
-                f"时间线 {pos:.1f}s 起）{trans}"
+                f"[{clip.trim.start:.1f}s → {clip.trim.end:.1f}s]（时长 {tl_len:.1f}s，"
+                f"时间线 {pos:.1f}s 起）{spd}{trans}"
             )
             if clip.reason:
                 lines.append(f"   - 理由：{clip.reason}")
-            pos += clip_len - t_in  # 转场消耗重叠，时间线位置按独占长度推进
+            pos += tl_len - t_in  # 转场消耗重叠，时间线位置按独占长度推进
 
     subtitles = [(t, s) for t in ir.tracks if isinstance(t, SubtitleTrack) for s in t.items]
     if subtitles:

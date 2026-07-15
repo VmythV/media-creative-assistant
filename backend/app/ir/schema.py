@@ -11,9 +11,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-IR_VERSION = "0.5"
-# 0.1：无音频轨；0.2：无转场；0.3：无交付规格；0.4：无字幕样式
-SUPPORTED_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5"}
+IR_VERSION = "0.6"
+# 0.1：无音频轨；0.2：无转场；0.3：无交付规格；0.4：无字幕样式；0.5：无变速
+SUPPORTED_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5", "0.6"}
 
 ClipRole = Literal["opening", "build", "climax", "ending", "broll"]
 
@@ -68,6 +68,13 @@ class Clip(BaseModel):
     role: ClipRole
     reason: str = ""
     transition: Transition | None = None
+    # 变速（v0.6）：>1 快放、<1 慢动作；时间线时长 = 素材段长 / speed
+    speed: float = Field(default=1.0, ge=0.25, le=4.0)
+
+    @property
+    def timeline_len(self) -> float:
+        """片段在时间线上的时长（考虑变速）。"""
+        return (self.trim.end - self.trim.start) / self.speed
 
 
 class Subtitle(BaseModel):
@@ -207,14 +214,14 @@ def validate_ir(data: dict, *, check_paths: bool = True) -> EditingIR:
             for i, clip in enumerate(track.items):
                 if i == 0 and clip.transition is not None:
                     errors.append(f"video#{track.index} 首个片段不能有 transition（转场语义为与前一片段之间）")
-                # 转场消耗两侧重叠：转入 + 转出必须小于片段自身时长
+                # 转场消耗两侧重叠：转入 + 转出必须小于片段的时间线时长（变速后）
                 t_in = clip.transition.duration if clip.transition else 0.0
                 nxt = track.items[i + 1] if i + 1 < len(track.items) else None
                 t_out = nxt.transition.duration if nxt and nxt.transition else 0.0
-                clip_len = clip.trim.end - clip.trim.start
-                if t_in + t_out >= clip_len:
+                tl_len = clip.timeline_len
+                if t_in + t_out >= tl_len:
                     errors.append(
-                        f"video#{track.index} 第 {i + 1} 个片段时长 {clip_len:.2f}s 不足以承载"
+                        f"video#{track.index} 第 {i + 1} 个片段时间线时长 {tl_len:.2f}s 不足以承载"
                         f"转入 {t_in}s + 转出 {t_out}s 的转场重叠"
                     )
         elif track.type == "audio":
@@ -247,6 +254,6 @@ def timeline_duration(ir: EditingIR) -> float:
     if not video_tracks:
         return 0.0
     main = min(video_tracks, key=lambda t: t.index)
-    total = sum(c.trim.end - c.trim.start for c in main.items)
+    total = sum(c.timeline_len for c in main.items)  # 变速后的时间线时长
     total -= sum(c.transition.duration for c in main.items if c.transition)
     return round(total, 3)

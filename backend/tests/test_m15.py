@@ -50,7 +50,7 @@ def test_ir_v05_style_validation(black_video):
     with pytest.raises(IRValidationError):
         validate_ir(_ir(str(black_video), {"position": "left"}))
     # 无样式兼容
-    assert validate_ir(_ir(str(black_video), None)).version == "0.5"
+    assert validate_ir(_ir(str(black_video), None)).version == "0.5"  # 显式 0.5 IR 仍受支持
 
 
 def _row_brightness(frame_path: str, region: str) -> float:
@@ -112,7 +112,7 @@ async def test_style_api_and_chat_intent(analyzed_asset):
         resp = client.put(f"/api/plans/{plan_id}/subtitle-style", json={"preset": "elegant"}).json()
         assert resp["style"]["font"] == "serif" and resp["style"]["color"] == "#FFF8E7"
         ir = client.get(f"/api/plans/{plan_id}").json()["ir"]
-        assert ir["version"] == "0.5"
+        assert ir["version"] == "0.6"
         # 预设 + 字段覆盖
         resp = client.put(f"/api/plans/{plan_id}/subtitle-style",
                           json={"preset": "bold", "position": "center"}).json()

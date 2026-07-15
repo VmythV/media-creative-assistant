@@ -239,3 +239,11 @@
 - [x] apply_review_fixes：收集 fix_ops → apply_clip_ops 产出新方案；替换失败退回仅时长修剪，部分成功如实上报
 - [x] API：POST /plans/{id}/apply-fixes；对话 fix_issues 意图（无 review 先自检，20 种）；前端自检卡「一键修复」按钮 + 可自动修复标记
 - [x] M24 验证：pytest 5 项通过（93 passed 全量）；真实走查：方案9 目标设8s，「检查并修复」→ 时长偏差按比例修剪全部6片段产出新方案#14，主观模糊/构图问题如实归为手动
+
+## M25 变速（backlog B5）
+
+- [x] IR v0.6：Clip.speed（0.25-4.0，默认 1）+ timeline_len 属性；timeline_duration/转场约束/字幕时移全部按变速后时间线时长
+- [x] 渲染器：setpts（视频）+ atempo 链（音频，分解到 [0.5,2.0] 乘积）；转场 offset 用时间线时长
+- [x] plan_to_ir 透传 speed + 字幕时移；edit_clips speed 操作；diff 检测变速
+- [x] Resolve/exporters：原速兜底 + 摘要「变速仅体现渲染成片」提示；能力边界清单移除变速；前端片段/执行卡展示
+- [x] M25 验证：pytest 通过；真实"某段放慢一倍"走查
