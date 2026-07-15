@@ -232,3 +232,10 @@
 - [x] 报告合成：verdict（pass/needs_improvement/has_problems）+ issues + 可执行建议，存 plan.review
 - [x] API：POST /plans/{id}/review；对话 review_video 意图（19 种）；成片卡自检结果展示
 - [x] M23 验证：pytest 2 项通过（88 passed 全量，瑕疵成片夹具验证黑场/静音/偏差/重复全命中）；真实走查：AI 审查自己的竖屏成片，指出时长偏差 23%、模糊填充占比过高、第3/5帧构图雷同，每条带可执行建议
+
+## M24 自检自动修复（backlog B22）
+
+- [x] review issue 编译 fix_ops：时长偏长→trim 全片段、黑场→replace（时间线映射片段）、重复→replace 较晚者；replace 位置全局去重
+- [x] apply_review_fixes：收集 fix_ops → apply_clip_ops 产出新方案；替换失败退回仅时长修剪，部分成功如实上报
+- [x] API：POST /plans/{id}/apply-fixes；对话 fix_issues 意图（无 review 先自检，20 种）；前端自检卡「一键修复」按钮 + 可自动修复标记
+- [x] M24 验证：pytest 5 项通过（93 passed 全量）；真实走查：方案9 目标设8s，「检查并修复」→ 时长偏差按比例修剪全部6片段产出新方案#14，主观模糊/构图问题如实归为手动

@@ -282,9 +282,28 @@ function ReviewCard({ plan, refresh }: { plan: Plan; refresh: () => void }) {
     return <Button size="small" onClick={run} loading={busy}>成片自检（AI 审片）</Button>;
   }
   const meta = VERDICT_META[review.verdict] ?? VERDICT_META.needs_improvement;
+  const fixable = review.auto_fixable ?? review.issues.filter((it) => it.fix_ops?.length).length;
+  const applyFixes = () => {
+    setBusy(true);
+    api.applyFixes(plan.id)
+      .then((r) => {
+        if (r.fixed) message.success(`已修复并生成新方案 #${r.new_plan_id}，可重新渲染查看`, 6);
+        else message.info(r.message || "没有可自动修复的问题");
+        refresh();
+      })
+      .catch((e) => message.error(String(e)))
+      .finally(() => setBusy(false));
+  };
   return (
     <Card size="small" title={<Space><span>成片自检</span><Tag color={meta.color}>{meta.text}</Tag></Space>}
-      extra={<Button size="small" type="text" onClick={run} loading={busy}>重新检查</Button>}>
+      extra={<Space>
+        {fixable > 0 && (
+          <Button size="small" type="primary" ghost onClick={applyFixes} loading={busy}>
+            一键修复（{fixable}）
+          </Button>
+        )}
+        <Button size="small" type="text" onClick={run} loading={busy}>重新检查</Button>
+      </Space>}>
       <Space direction="vertical" size={4} style={{ width: "100%" }}>
         <Typography.Text type="secondary">{review.summary}</Typography.Text>
         {review.issues.map((it, i) => (
@@ -292,6 +311,7 @@ function ReviewCard({ plan, refresh }: { plan: Plan; refresh: () => void }) {
             <Tag color={it.severity === "high" ? "red" : it.severity === "medium" ? "orange" : "default"}>
               {it.severity}
             </Tag>
+            {it.fix_ops?.length ? <Tag color="green">可自动修复</Tag> : null}
             {it.detail}
             {it.suggestion && <Typography.Text type="secondary">（{it.suggestion}）</Typography.Text>}
           </Typography.Text>

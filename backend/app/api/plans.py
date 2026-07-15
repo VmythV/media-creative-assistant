@@ -460,6 +460,19 @@ async def review_plan_render(plan_id: int, db: Session = Depends(get_db)) -> dic
         raise HTTPException(400, str(e)) from e
 
 
+@router.post("/plans/{plan_id}/apply-fixes")
+async def apply_review_fixes_endpoint(plan_id: int, db: Session = Depends(get_db)) -> dict:
+    """按自检报告一键修复（M24）：可修复 issue → 确定性局部操作 → 新方案。"""
+    from app.runtime.review import apply_review_fixes
+
+    if db.get(EditPlan, plan_id) is None:
+        raise HTTPException(404, "方案不存在")
+    try:
+        return await apply_review_fixes(plan_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 class PublishKitRequest(BaseModel):
     platform: str = "抖音"
 

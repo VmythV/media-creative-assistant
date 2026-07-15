@@ -75,8 +75,9 @@ export interface ExecutionResult {
 
 export interface ReviewReport {
   verdict: string; // pass / needs_improvement / has_problems
-  issues: { type: string; severity: string; detail: string; suggestion?: string }[];
+  issues: { type: string; severity: string; detail: string; suggestion?: string; fix_ops?: unknown[] }[];
   summary: string;
+  auto_fixable?: number;
 }
 
 export interface PublishKit {
@@ -223,6 +224,9 @@ export const api = {
   resetOutput: (id: number) => request(`/api/plans/${id}/output`, { method: "DELETE" }),
   reviewRender: (id: number) =>
     request<{ review: ReviewReport }>(`/api/plans/${id}/review`, { method: "POST" }),
+  applyFixes: (id: number) =>
+    request<{ fixed: boolean; new_plan_id: number | null; applied: string[]; manual: string[]; message?: string }>(
+      `/api/plans/${id}/apply-fixes`, { method: "POST" }),
   publishKit: (id: number, platform = "抖音") =>
     request<{ publish: PublishKit }>(`/api/plans/${id}/publish-kit`, {
       method: "POST", body: JSON.stringify({ platform }),
