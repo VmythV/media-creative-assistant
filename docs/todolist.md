@@ -256,3 +256,10 @@
 - [x] review/diff 对标题卡防护：跳过重复检测、黑场误报剔除、diff 按文字匹配
 - [x] API POST /plans/{id}/title；对话 add_title 意图（22 种）+ 链式 remap；前端片段卡标题展示
 - [x] M26 验证：pytest；真实"加个片头"走查
+
+## M27 方案时间线可视化（backlog B13）
+
+- [x] TimelineView：横向色块，宽度正比时间线时长（含变速/标题卡时长）
+- [x] 视觉编码：分段色（开场/铺垫/高潮/结尾/空镜）、标题卡黑底金条、转场紫点、变速洋红标签、字幕气泡、hover 详情
+- [x] ClipsPanel 时间线/列表切换（默认时间线）；表头总长/段数/转场数
+- [x] M27 验证：tsc 构建通过；faithful HTML 复刻 headless 截图确认（标题卡+5转场+0.5x最宽块+字幕气泡）

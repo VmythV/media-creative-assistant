@@ -1,5 +1,5 @@
 import {
-  Alert, AutoComplete, Button, Card, Collapse, Descriptions, Empty, Input, List, Segmented, Space, Steps, Tag, Typography, message,
+  Alert, AutoComplete, Button, Card, Collapse, Descriptions, Empty, Input, List, Segmented, Space, Steps, Tag, Tooltip, Typography, message,
 } from "antd";
 import { useEffect, useState } from "react";
 import { api, type Asset, type Plan, type PlanClip } from "./api";
@@ -63,6 +63,100 @@ function ClipList({ clips, assets }: { clips: PlanClip[]; assets: Asset[] }) {
         </List.Item>
       )}
     />
+  );
+}
+
+const SECTION_TINT: Record<string, string> = {
+  opening: "#f6ffed", build: "#e6f4ff", climax: "#fff1f0", ending: "#fff7e6", broll: "#fafafa",
+};
+const SECTION_BAR: Record<string, string> = {
+  opening: "#52c41a", build: "#1677ff", climax: "#ff4d4f", ending: "#fa8c16", broll: "#bfbfbf",
+};
+
+function clipTlLen(c: PlanClip): number {
+  return c.kind === "title" ? (c.duration ?? 2.5) : (c.end - c.start) / (c.speed ?? 1);
+}
+
+function TimelineView({ clips, assets }: { clips: PlanClip[]; assets: Asset[] }) {
+  const nameOf = (id: number) => assets.find((a) => a.id === id)?.filename ?? `素材#${id}`;
+  const total = clips.reduce((s, c) => s + clipTlLen(c), 0);
+  const trans = clips.filter((c) => c.transition).length;
+  return (
+    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        时间线总长 {total.toFixed(1)}s · {clips.length} 段
+        {trans ? ` · ${trans} 处转场` : ""}
+      </Typography.Text>
+      <div style={{ display: "flex", alignItems: "stretch", gap: 2, width: "100%",
+                    background: "#fff", padding: "6px 4px", borderRadius: 6, overflowX: "auto" }}>
+        {clips.map((c, i) => {
+          const len = clipTlLen(c);
+          const isTitle = c.kind === "title";
+          const bg = isTitle ? "#1f1f1f" : (SECTION_TINT[c.section] ?? "#fafafa");
+          const bar = isTitle ? "#faad14" : (SECTION_BAR[c.section] ?? "#bfbfbf");
+          const label = isTitle
+            ? `${c.position === "outro" ? "片尾" : "片头"}标题`
+            : (SECTION_LABEL[c.section] ?? c.section);
+          const main = isTitle ? c.text : nameOf(c.asset_id);
+          return (
+            <Tooltip key={i} title={
+              <div>
+                <div>{i + 1}. {label} · {len.toFixed(1)}s</div>
+                <div>{main}</div>
+                {c.transition && <div>转入：{TRANSITION_LABEL[c.transition.type] ?? c.transition.type} {c.transition.duration}s</div>}
+                {c.speed != null && c.speed !== 1 && <div>{c.speed < 1 ? "慢动作" : "快放"} {c.speed}x</div>}
+                {c.subtitle && <div>字幕：{c.subtitle}</div>}
+                {isTitle && c.subtitle && <div>副标题：{c.subtitle}</div>}
+              </div>
+            }>
+              <div style={{
+                flex: `${Math.max(len, 0.4)} 1 0`, minWidth: 36, height: 58, background: bg,
+                borderTop: `3px solid ${bar}`, borderRadius: 4, padding: "3px 4px",
+                position: "relative", overflow: "hidden", cursor: "default",
+                color: isTitle ? "#fff" : undefined,
+              }}>
+                {c.transition && (
+                  <span style={{ position: "absolute", left: -1, top: "50%", transform: "translateY(-50%)",
+                                 width: 8, height: 8, background: "#722ed1", borderRadius: "50%",
+                                 border: "1px solid #fff" }} />
+                )}
+                {c.speed != null && c.speed !== 1 && (
+                  <span style={{ position: "absolute", right: 2, top: 2, fontSize: 9,
+                                 color: "#c41d7f" }}>{c.speed}x</span>
+                )}
+                <div style={{ fontSize: 10, opacity: 0.75 }}>{label}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
+                              overflow: "hidden", textOverflow: "ellipsis" }}>{main}</div>
+                <div style={{ position: "absolute", bottom: 2, left: 4, fontSize: 9, opacity: 0.7 }}>
+                  {len.toFixed(1)}s
+                </div>
+                {c.subtitle && !isTitle && (
+                  <div style={{ position: "absolute", bottom: 2, right: 4, fontSize: 9,
+                                color: "#08979c", maxWidth: "70%", whiteSpace: "nowrap",
+                                overflow: "hidden", textOverflow: "ellipsis" }}>💬{c.subtitle}</div>
+                )}
+              </div>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </Space>
+  );
+}
+
+function ClipsPanel({ clips, assets }: { clips: PlanClip[]; assets: Asset[] }) {
+  const [view, setView] = useState<string>("timeline");
+  return (
+    <Space direction="vertical" size={8} style={{ width: "100%" }}>
+      <Segmented
+        size="small" value={view}
+        options={[{ label: "时间线", value: "timeline" }, { label: "列表", value: "list" }]}
+        onChange={(v) => setView(String(v))}
+      />
+      {view === "timeline"
+        ? <TimelineView clips={clips} assets={assets} />
+        : <ClipList clips={clips} assets={assets} />}
+    </Space>
   );
 }
 
@@ -484,7 +578,7 @@ export function PlanPanel({
                 {p.status === "failed" && (
                   <Alert type="error" showIcon message="方案生成失败" description={p.plan.error} />
                 )}
-                {p.plan.clips && <ClipList clips={p.plan.clips} assets={assets} />}
+                {p.plan.clips && <ClipsPanel clips={p.plan.clips} assets={assets} />}
                 <Space>
                   {p.status === "draft" && (
                     <>
