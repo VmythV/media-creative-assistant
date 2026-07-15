@@ -246,3 +246,63 @@ def image_to_clip(path: str, duration: float = IMAGE_CLIP_DURATION) -> dict:
         baked.unlink(missing_ok=True)
 
     return {"clip_path": str(out), "duration": duration, "cached": False}
+
+
+def generate_title_clip(text: str, *, subtitle: str = "", duration: float = 2.5,
+                        width: int = 1920, height: int = 1080, fps: float = 25.0,
+                        background: str = "#000000", color: str = "#FFFFFF") -> dict:
+    """标题卡（M26）：纯色背景 + 居中标题/副标题 → 定长静止视频。内容哈希缓存幂等。
+
+    本机 ffmpeg 精简编译无 drawtext，故用 Pillow 渲染文字 PNG 再转视频（同字幕方案）。
+    """
+    import hashlib
+
+    from app.config import settings
+    from app.ir.renderer import _hex_rgb, _load_font
+
+    key = hashlib.sha1(
+        f"{text}|{subtitle}|{duration}|{width}x{height}|{fps}|{background}|{color}".encode()
+    ).hexdigest()[:12]
+    out_dir = settings.data_dir / "title_clips"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"title_{key}.mp4"
+    if out.exists():
+        return {"clip_path": str(out), "duration": duration, "cached": True}
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (width, height), _hex_rgb(background))
+    draw = ImageDraw.Draw(img)
+    title_font = _load_font(max(round(height * 0.09), 20), "serif")
+    sub_font = _load_font(max(round(height * 0.045), 14), "sans")
+    if title_font is None:
+        raise RuntimeError("无可用中文字体，无法生成标题卡")
+
+    def _centered(txt, font, cy):
+        box = draw.textbbox((0, 0), txt, font=font)
+        tw, th = box[2] - box[0], box[3] - box[1]
+        draw.text(((width - tw) // 2 - box[0], cy - th // 2 - box[1]), txt, font=font,
+                  fill=(*_hex_rgb(color), 255))
+
+    if subtitle:
+        _centered(text, title_font, round(height * 0.44))
+        _centered(subtitle, sub_font, round(height * 0.56))
+    else:
+        _centered(text, title_font, height // 2)
+
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        png = Path(tmp.name)
+    img.save(png)
+    try:
+        proc = _run([
+            "ffmpeg", "-y", "-v", "error", "-loop", "1", "-t", str(duration), "-i", str(png),
+            "-r", str(fps), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-pix_fmt", "yuv420p", str(out),
+        ])
+        if proc.returncode != 0:
+            raise RuntimeError(f"标题卡生成失败: {proc.stderr.strip()[:300]}")
+    finally:
+        png.unlink(missing_ok=True)
+    return {"clip_path": str(out), "duration": duration, "cached": False}

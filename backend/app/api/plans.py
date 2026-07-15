@@ -447,6 +447,30 @@ def edit_clips(plan_id: int, req: EditClipsRequest, db: Session = Depends(get_db
         raise HTTPException(400, str(e)) from e
 
 
+class TitleRequest(BaseModel):
+    text: str
+    subtitle: str = ""
+    position: str = "intro"  # intro / outro
+    duration: float = 2.5
+    background: str = "#000000"
+    color: str = "#FFFFFF"
+
+
+@router.post("/plans/{plan_id}/title")
+def add_title(plan_id: int, req: TitleRequest, db: Session = Depends(get_db)) -> dict:
+    """加片头/片尾标题卡（M26）：确定性生成文字视频 → 新方案。"""
+    from app.runtime.clip_ops import add_title_card
+
+    if db.get(EditPlan, plan_id) is None:
+        raise HTTPException(404, "方案不存在")
+    try:
+        return add_title_card(plan_id, text=req.text, subtitle=req.subtitle,
+                              position=req.position, duration=req.duration,
+                              background=req.background, color=req.color)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 @router.post("/plans/{plan_id}/review")
 async def review_plan_render(plan_id: int, db: Session = Depends(get_db)) -> dict:
     """成片自检（M23）：确定性检查 + 视觉回喂，报告存 plan.review。"""

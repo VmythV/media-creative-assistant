@@ -24,8 +24,14 @@ def _at(clips: list[dict], position: int) -> dict:
     return clips[position - 1]
 
 
+def _reject_title(c: dict, op_name: str) -> None:
+    if c.get("kind") == "title":
+        raise ValueError(f"该位置是标题卡，不支持{op_name}（可 remove 删除或 move 移动）")
+
+
 def _op_trim(clips, op, assets_by_id) -> str:
     c = _at(clips, op["position"])
+    _reject_title(c, "修剪")
     asset = assets_by_id.get(c["asset_id"])
     limit = asset.duration if asset and asset.duration else None
     if op.get("start") is not None or op.get("end") is not None:
@@ -65,6 +71,7 @@ def _op_move(clips, op) -> str:
 
 def _op_subtitle(clips, op) -> str:
     c = _at(clips, op["position"])
+    _reject_title(c, "改字幕（标题文字请删了重加）")
     text = (op.get("text") or "").strip()
     c["subtitle"] = text or None
     return f"片段{op['position']} 字幕改为「{text or '（清除）'}」"
@@ -72,6 +79,7 @@ def _op_subtitle(clips, op) -> str:
 
 def _op_speed(clips, op) -> str:
     c = _at(clips, op["position"])
+    _reject_title(c, "变速")
     try:
         speed = float(op.get("speed"))
     except (TypeError, ValueError) as e:
@@ -105,6 +113,7 @@ def _overlaps(a_start, a_end, b_start, b_end) -> bool:
 
 def _op_replace(clips, op, analyzed) -> str:
     c = _at(clips, op["position"])
+    _reject_title(c, "替换素材")
     orig_len = c["end"] - c["start"]
     hint = (op.get("hint") or "").strip()
 
@@ -196,3 +205,54 @@ def apply_clip_ops(base_plan_id: int, ops: list[dict]) -> dict:
         new_id = row.id
     return {"plan_id": new_id, "revised_from": base_plan_id,
             "changes": changes, "duration": diff.get("duration")}
+
+
+def add_title_card(base_plan_id: int, *, text: str, subtitle: str = "",
+                   position: str = "intro", duration: float = 2.5,
+                   background: str = "#000000", color: str = "#FFFFFF") -> dict:
+    """加片头/片尾标题卡（M26）：确定性插入 title 条目 → 重建 IR → 新方案行。"""
+    if not str(text).strip():
+        raise ValueError("标题文字不能为空")
+    if position not in ("intro", "outro"):
+        raise ValueError(f"位置只能是 intro（片头）或 outro（片尾），收到 {position}")
+    with db_session() as db:
+        base = db.get(EditPlan, base_plan_id)
+        if base is None or not base.plan.get("clips"):
+            raise ValueError(f"方案 #{base_plan_id} 不存在或没有内容")
+        base_plan = {k: v for k, v in dict(base.plan).items()
+                     if k not in ("execution", "render", "diff", "publish",
+                                  "revised_from", "revision_instruction")}
+        base_goal = base.goal
+
+    title_entry = {
+        "kind": "title", "text": str(text).strip(), "subtitle": str(subtitle or "").strip(),
+        "position": position, "duration": round(min(max(float(duration), 1.0), 10.0), 2),
+        "background": background, "color": color, "subtitle_none": None,
+    }
+    title_entry.pop("subtitle_none", None)
+    clips = [dict(c) for c in base_plan["clips"]]
+    if position == "intro":
+        clips.insert(0, title_entry)
+        # 原第一段若带转入转场，移到标题卡上更自然（首段不能有转场）
+        if len(clips) > 1 and clips[1].get("transition"):
+            clips[1].pop("transition", None)
+    else:
+        clips.append(title_entry)
+
+    analyzed = _load_analyzed_assets(None)
+    new_plan = {**base_plan, "clips": clips}
+    ir = plan_to_ir(new_plan, analyzed, base_plan.get("title") or "加标题卡")
+    validate_ir(ir)
+    label = "片头" if position == "intro" else "片尾"
+    change = f"新增{label}标题卡「{text}」{('/' + subtitle) if subtitle else ''}（{duration}s）"
+    with db_session() as db:
+        row = EditPlan(
+            goal=base_goal,
+            plan={**new_plan, "revised_from": base_plan_id,
+                  "revision_instruction": f"[精确修改] {change}"},
+            ir=ir, status="draft",
+        )
+        db.add(row)
+        db.commit()
+        new_id = row.id
+    return {"plan_id": new_id, "revised_from": base_plan_id, "change": change}

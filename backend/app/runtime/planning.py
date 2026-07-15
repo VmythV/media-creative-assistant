@@ -136,15 +136,57 @@ def _clamp_transition(raw, prev_len: float, clip_len: float) -> dict | None:
 
 
 def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
-    """确定性转换：剪辑方案 → Editing IR。"""
+    """确定性转换：剪辑方案 → Editing IR。
+
+    plan.clips 中 kind=="title" 的条目是标题卡：确定性生成纯色文字视频（M26），
+    注册为 source 后当作普通 Clip 参与时间线，故 IR 侧无需感知标题类型。
+    """
     assets_by_id = {item["asset"].id: item["asset"] for item in analyzed}
+    # 分辨率/帧率取自第一个素材片段（标题卡按此生成，避免渲染补边）
+    first = next(
+        (assets_by_id.get(c.get("asset_id")) for c in plan.get("clips", [])
+         if c.get("kind") != "title" and assets_by_id.get(c.get("asset_id"))),
+        None,
+    )
+    fps = first.fps if first and first.fps else 25.0
+    res_w = first.width if first and first.width else 1920
+    res_h = first.height if first and first.height else 1080
+
     used_ids: list[int] = []
+    title_sources: list[tuple[str, str, float]] = []
     clips_ir = []
     subtitles_ir = []
     timeline_pos = 0.0
     prev_tl_len = 0.0
 
     for clip in plan.get("clips", []):
+        if clip.get("kind") == "title":
+            from app.tools.media import generate_title_clip
+
+            dur = round(min(max(float(clip.get("duration") or 2.5), 1.0), 10.0), 3)
+            gen = generate_title_clip(
+                str(clip.get("text") or "").strip() or "标题",
+                subtitle=str(clip.get("subtitle") or "").strip(),
+                duration=dur, width=res_w, height=res_h, fps=fps,
+                background=clip.get("background") or "#000000",
+                color=clip.get("color") or "#FFFFFF",
+            )
+            src_id = f"title_{len(title_sources)}"
+            title_sources.append((src_id, gen["clip_path"], dur))
+            transition = _clamp_transition(clip.get("transition"), prev_tl_len, dur)
+            clip_ir = {
+                "type": "clip", "source_id": src_id,
+                "trim": {"start": 0.0, "end": dur},
+                "role": "opening" if clip.get("position") != "outro" else "ending",
+                "reason": f"标题卡：{clip.get('text', '')}",
+            }
+            if transition:
+                clip_ir["transition"] = transition
+            clips_ir.append(clip_ir)
+            timeline_pos += dur - (transition["duration"] if transition else 0.0)
+            prev_tl_len = dur
+            continue
+
         aid = clip["asset_id"]
         asset = assets_by_id.get(aid)
         if asset is None:
@@ -183,24 +225,21 @@ def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
         timeline_pos += effective_len
         prev_tl_len = tl_len
 
-    first = assets_by_id[used_ids[0]] if used_ids else None
     tracks: list[dict] = [{"type": "video", "index": 1, "items": clips_ir}]
     if subtitles_ir:
         tracks.append({"type": "subtitle", "index": 1, "items": subtitles_ir})
+    sources = [
+        {"id": f"src_{aid}", "path": assets_by_id[aid].path, "duration": assets_by_id[aid].duration}
+        for aid in used_ids
+    ] + [{"id": sid, "path": path, "duration": dur} for sid, path, dur in title_sources]
     return {
         "version": IR_VERSION,
         "project": {
             "name": project_name,
-            "fps": (first.fps if first and first.fps else 25.0),
-            "resolution": {
-                "width": first.width if first and first.width else 1920,
-                "height": first.height if first and first.height else 1080,
-            },
+            "fps": fps,
+            "resolution": {"width": res_w, "height": res_h},
         },
-        "sources": [
-            {"id": f"src_{aid}", "path": assets_by_id[aid].path, "duration": assets_by_id[aid].duration}
-            for aid in used_ids
-        ],
+        "sources": sources,
         "tracks": tracks,
         "render": None,
     }
@@ -352,12 +391,28 @@ def _transition_desc(c: dict) -> str:
     return f"{t['type']} {float(t.get('duration') or 0.5):.1f}s"
 
 
+def _title_desc(c: dict) -> str:
+    label = "片头" if c.get("position") != "outro" else "片尾"
+    sub = f"/{c['subtitle']}" if c.get("subtitle") else ""
+    return f"{label}标题卡「{c.get('text', '')}{sub}」"
+
+
 def diff_plans(old: dict, new: dict) -> dict:
-    """确定性方案差异：按 asset_id + 时间区间重叠匹配片段，产出人类可读差异。"""
-    old_clips = list(old.get("clips", []))
-    new_clips = list(new.get("clips", []))
+    """确定性方案差异：按 asset_id + 时间区间重叠匹配片段，产出人类可读差异。
+
+    标题卡（无 asset_id）与素材片段分开处理：按文字匹配，仅报新增/删除。
+    """
+    old_all = list(old.get("clips", []))
+    new_all = list(new.get("clips", []))
+    old_clips = [c for c in old_all if c.get("kind") != "title"]
+    new_clips = [c for c in new_all if c.get("kind") != "title"]
+    old_titles = [c.get("text", "") for c in old_all if c.get("kind") == "title"]
+    new_titles = [c for c in new_all if c.get("kind") == "title"]
     matched_old: set[int] = set()
     added, changed = [], []
+    for tc in new_titles:  # 标题卡：文字未出现在旧方案即为新增
+        if tc.get("text", "") not in old_titles:
+            added.append(f"新增：{_title_desc(tc)}")
 
     for ni, nc in enumerate(new_clips):
         best, best_overlap = None, 0.0
@@ -391,8 +446,16 @@ def diff_plans(old: dict, new: dict) -> dict:
     removed = [
         f"删除：{_clip_desc(oc)}" for oi, oc in enumerate(old_clips) if oi not in matched_old
     ]
-    old_dur = sum(c["end"] - c["start"] for c in old_clips)
-    new_dur = sum(c["end"] - c["start"] for c in new_clips)
+    new_title_texts = [tc.get("text", "") for tc in new_titles]
+    removed += [f"删除：{label}标题卡" for label, txt in
+                (("标题", t) for t in old_titles) if txt not in new_title_texts]
+
+    def _dur(c):
+        return float(c.get("duration") or 2.5) if c.get("kind") == "title" \
+            else (c["end"] - c["start"]) / float(c.get("speed") or 1.0)
+
+    old_dur = sum(_dur(c) for c in old_all)
+    new_dur = sum(_dur(c) for c in new_all)
     return {
         "added": added,
         "removed": removed,

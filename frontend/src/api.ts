@@ -61,6 +61,10 @@ export interface PlanClip {
   subtitle: string | null;
   transition?: { type: string; duration: number } | null;
   speed?: number;
+  kind?: string;        // "title" 为标题卡
+  text?: string;        // 标题卡文字
+  position?: string;    // intro / outro
+  duration?: number;    // 标题卡时长
 }
 
 export interface ExecutionResult {

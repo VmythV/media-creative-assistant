@@ -75,6 +75,8 @@ def check_repeated_clips(plan: dict) -> dict | None:
     repeats = []
     pairs = []
     for i, c in enumerate(clips, 1):
+        if c.get("kind") == "title":  # 标题卡无素材，跳过重复检测
+            continue
         for j, k in seen:
             if k["asset_id"] == c["asset_id"] and \
                     min(k["end"], c["end"]) - max(k["start"], c["start"]) > 0.5:
@@ -130,12 +132,19 @@ async def _vision_review(video: str, duration: float, n_frames: int = 5) -> tupl
         return [], f"视觉自检不可用（{str(e)[:80]}）"
 
 
+def _item_len(c: dict) -> float:
+    """片段/标题卡在时间线上的时长（含变速；标题卡取 duration）。"""
+    if c.get("kind") == "title":
+        return float(c.get("duration") or 2.5)
+    return (c["end"] - c["start"]) / float(c.get("speed") or 1.0)
+
+
 def _clip_slots(clips: list[dict]) -> list[tuple[int, float, float]]:
     """片段在输出时间线上的独占区间（与 plan_to_ir 字幕定位一致，含转场重叠扣减）。"""
     slots = []
     pos = 0.0
     for i, c in enumerate(clips, 1):
-        clip_len = c["end"] - c["start"]
+        clip_len = _item_len(c)
         t_in = 0.0
         if i > 1 and isinstance(c.get("transition"), dict):
             t_in = min(float(c["transition"].get("duration") or 0), clip_len / 2)
@@ -160,6 +169,7 @@ def _attach_fix_ops(issues: list[dict], plan: dict, actual_duration: float) -> N
     """
     clips = plan.get("clips") or []
     slots = _clip_slots(clips)
+    is_title = [c.get("kind") == "title" for c in clips]
     replace_positions: set[int] = set()
     for issue in issues:
         kind = issue["type"]
@@ -167,7 +177,8 @@ def _attach_fix_ops(issues: list[dict], plan: dict, actual_duration: float) -> N
             ops = []
             for span in issue.get("spans", []):
                 idx = _clip_at(slots, (span[0] + span[1]) / 2)
-                if idx and idx not in replace_positions:
+                # 标题卡本就是暗底，不当作黑场问题去替换
+                if idx and idx not in replace_positions and not is_title[idx - 1]:
                     replace_positions.add(idx)
                     ops.append({"op": "replace", "position": idx})
             if ops:
@@ -186,7 +197,9 @@ def _attach_fix_ops(issues: list[dict], plan: dict, actual_duration: float) -> N
                 ratio = target / actual_duration
                 ops = []
                 for i, c in enumerate(clips, 1):
-                    clip_len = c["end"] - c["start"]
+                    if is_title[i - 1]:  # 标题卡不参与按比例修剪
+                        continue
+                    clip_len = _item_len(c)
                     new_dur = round(max(clip_len * ratio, 0.5), 2)
                     if new_dur < clip_len - 0.05:  # 只对确实需缩短的片段下 trim
                         ops.append({"op": "trim", "position": i, "duration": new_dur})
@@ -207,9 +220,23 @@ async def review_render(plan_id: int) -> dict:
         raise ValueError("该方案还没有渲染成片，先渲染再检查")
 
     duration = probe_media(video)["duration"]
+    black = check_black_frames(video)
+    if black:  # 标题卡本就是暗底，剔除落在标题卡时间段内的"黑场"误报
+        title_slots = [(s, e) for (idx, s, e), c in
+                       zip(_clip_slots(plan.get("clips") or []), plan.get("clips") or [])
+                       if c.get("kind") == "title"]
+        kept = [sp for sp in black["spans"]
+                if not any(ts <= (sp[0] + sp[1]) / 2 < te for ts, te in title_slots)]
+        if not kept:
+            black = None
+        else:
+            black["spans"] = kept
+            n = len(kept)
+            desc = "、".join(f"{a:.1f}-{b:.1f}s" for a, b in kept[:3])
+            black["detail"] = f"检测到 {n} 处黑场（{desc}）"
     issues = [c for c in (
         check_duration(plan, duration),
-        check_black_frames(video),
+        black,
         check_audio_levels(video),
         check_repeated_clips(plan),
     ) if c]

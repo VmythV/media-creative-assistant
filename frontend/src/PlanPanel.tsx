@@ -39,15 +39,26 @@ function ClipList({ clips, assets }: { clips: PlanClip[]; assets: Asset[] }) {
                   ⇢ 转场：{TRANSITION_LABEL[c.transition.type] ?? c.transition.type} {c.transition.duration}s
                 </Tag>
               )}
-              <Tag color={SECTION_COLOR[c.section]}>{SECTION_LABEL[c.section] ?? c.section}</Tag>
-              <Typography.Text strong>{nameOf(c.asset_id)}</Typography.Text>
-              <Tag>{c.start.toFixed(1)}s - {c.end.toFixed(1)}s（{(c.end - c.start).toFixed(1)}s）</Tag>
-              {c.speed != null && c.speed !== 1 && (
-                <Tag color="magenta">{c.speed < 1 ? "慢动作" : "快放"} {c.speed}x</Tag>
+              {c.kind === "title" ? (
+                <>
+                  <Tag color="gold">{c.position === "outro" ? "片尾" : "片头"}标题卡</Tag>
+                  <Typography.Text strong>{c.text}</Typography.Text>
+                  {c.subtitle && <Typography.Text type="secondary">{c.subtitle}</Typography.Text>}
+                  <Tag>{(c.duration ?? 2.5).toFixed(1)}s</Tag>
+                </>
+              ) : (
+                <>
+                  <Tag color={SECTION_COLOR[c.section]}>{SECTION_LABEL[c.section] ?? c.section}</Tag>
+                  <Typography.Text strong>{nameOf(c.asset_id)}</Typography.Text>
+                  <Tag>{c.start.toFixed(1)}s - {c.end.toFixed(1)}s（{(c.end - c.start).toFixed(1)}s）</Tag>
+                  {c.speed != null && c.speed !== 1 && (
+                    <Tag color="magenta">{c.speed < 1 ? "慢动作" : "快放"} {c.speed}x</Tag>
+                  )}
+                  {c.subtitle && <Tag color="cyan">字幕：{c.subtitle}</Tag>}
+                </>
               )}
-              {c.subtitle && <Tag color="cyan">字幕：{c.subtitle}</Tag>}
             </Space>
-            <Typography.Text type="secondary">{c.reason}</Typography.Text>
+            {c.kind !== "title" && <Typography.Text type="secondary">{c.reason}</Typography.Text>}
           </Space>
         </List.Item>
       )}

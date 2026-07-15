@@ -247,3 +247,12 @@
 - [x] plan_to_ir 透传 speed + 字幕时移；edit_clips speed 操作；diff 检测变速
 - [x] Resolve/exporters：原速兜底 + 摘要「变速仅体现渲染成片」提示；能力边界清单移除变速；前端片段/执行卡展示
 - [x] M25 验证：pytest 通过；真实"某段放慢一倍"走查
+
+## M26 片头片尾/标题卡（backlog B7）
+
+- [x] generate_title_clip：Pillow 纯色背景+居中标题/副标题 → 定长视频（内容哈希缓存）
+- [x] plan.clips 支持 kind:"title" 条目；plan_to_ir 生成标题源+当普通 Clip（IR 侧无感知，Resolve 也能看到标题）
+- [x] add_title_card：确定性插入片头/片尾 → 重建 IR → 新方案；clip_ops 对标题卡拒绝 trim/replace/speed/subtitle（可 remove/move）
+- [x] review/diff 对标题卡防护：跳过重复检测、黑场误报剔除、diff 按文字匹配
+- [x] API POST /plans/{id}/title；对话 add_title 意图（22 种）+ 链式 remap；前端片段卡标题展示
+- [x] M26 验证：pytest；真实"加个片头"走查
