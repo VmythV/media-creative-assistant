@@ -149,8 +149,11 @@ async def run_revision(new_id: int, base_plan_id: int, instruction: str,
                 raise ValueError(f"源方案 #{base_plan_id} 不存在或没有内容")
             base_plan = {k: v for k, v in dict(base.plan).items()
                          if k not in ("execution", "render")}
+            base_ir = dict(base.ir) if base.ir else None
         result = await revise_plan(base_plan, instruction, asset_ids)
         diff = diff_plans(base_plan, result["plan"])
+        from app.runtime.planning import carry_ir_settings
+
         with db_session() as s:
             row = s.get(EditPlan, new_id)
             row.plan = {
@@ -159,7 +162,7 @@ async def run_revision(new_id: int, base_plan_id: int, instruction: str,
                 "revision_instruction": instruction,
                 "diff": diff,
             }
-            row.ir = result["ir"]
+            row.ir = carry_ir_settings(result["ir"], base_ir)  # 保留竖屏/字幕样式
             row.status = "draft"
             s.commit()
         bus.publish("plan", {"plan_id": new_id, "step": "draft", "detail": "修订方案生成完成"})
@@ -467,6 +470,19 @@ def add_title(plan_id: int, req: TitleRequest, db: Session = Depends(get_db)) ->
         return add_title_card(plan_id, text=req.text, subtitle=req.subtitle,
                               position=req.position, duration=req.duration,
                               background=req.background, color=req.color)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.post("/plans/{plan_id}/smart-crop")
+async def smart_crop_endpoint(plan_id: int, db: Session = Depends(get_db)) -> dict:
+    """竖屏智能裁切（M28）：视觉定位主体 → crop_focus + fill=crop → 新方案。"""
+    from app.runtime.framing import smart_crop
+
+    if db.get(EditPlan, plan_id) is None:
+        raise HTTPException(404, "方案不存在")
+    try:
+        return await smart_crop(plan_id)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 

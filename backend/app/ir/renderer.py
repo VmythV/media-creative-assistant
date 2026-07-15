@@ -74,11 +74,17 @@ def _encode_args(ir: EditingIR) -> list[str]:
     return ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
 
 
-def _compose_graph(w: int, h: int, fill: str, fps: float) -> str:
-    """单片段归一化滤镜图：目标画幅 + 构图策略（设计文档 phase2 §2）。产出 [vc]。"""
+def _compose_graph(w: int, h: int, fill: str, fps: float, crop_focus: float | None = None) -> str:
+    """单片段归一化滤镜图：目标画幅 + 构图策略（设计文档 phase2 §2）。产出 [vc]。
+
+    crop_focus（M28）：裁切窗口的水平焦点 0-1（跟随主体），None 即居中。
+    """
     if fill == "crop":
+        # scale 覆盖后按焦点偏移裁切：fx=0.5 居中、0 靠左、1 靠右（表达式基于缩放后尺寸）
+        fx = 0.5 if crop_focus is None else max(0.0, min(1.0, crop_focus))
+        cx = f"(iw-{w})*{fx:.3f}" if fx != 0.5 else f"(iw-{w})/2"
         return (f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
-                f"crop={w}:{h},fps={fps},format=yuv420p[vc]")
+                f"crop={w}:{h}:{cx}:(ih-{h})/2,fps={fps},format=yuv420p[vc]")
     if fill == "blur":
         return (
             f"[0:v]split[bg][fg];"
@@ -187,7 +193,6 @@ def render_video(
 
     # 1) 各片段 trim 并统一到交付规格（含统一音轨，无音轨补静音，保证 concat 一致）
     #    变速（M25）：视频 setpts、音频 atempo，使片段时间线时长 = 素材段长 / speed
-    compose = _compose_graph(w, h, fill, fps)
     seg_paths = []
     for i, clip in enumerate(clips, start=1):
         src = src_map[clip.source_id]
@@ -196,6 +201,8 @@ def render_video(
         seg = seg_dir / f"seg_{i:03d}.mp4"
         has_audio = _has_audio(src.path)
         a_in = "0:a:0" if has_audio else "1:a:0"
+        # 主体感知裁切焦点按片段变化（M28），故逐片段构建构图图
+        compose = _compose_graph(w, h, fill, fps, crop_focus=clip.crop_focus)
         # setpts 变速会保留原帧数（改变有效帧率），再用 fps 重采样回定帧率，否则 xfade 帧率不一致会失败
         v_stage = f"[vc]setpts=PTS/{speed},fps={fps}[vout]" if speed != 1.0 else "[vc]null[vout]"
         fc = f"{compose};{v_stage}"

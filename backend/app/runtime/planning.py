@@ -210,6 +210,8 @@ def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
             clip_ir["transition"] = transition
         if speed != 1.0:
             clip_ir["speed"] = round(speed, 3)
+        if clip.get("crop_focus") is not None:  # 主体感知裁切焦点（M28）
+            clip_ir["crop_focus"] = round(min(max(float(clip["crop_focus"]), 0.0), 1.0), 3)
         clips_ir.append(clip_ir)
         # 字幕占片段的"独占时间槽"：转场重叠期间沿用上一条字幕，新字幕从转场结束起显示
         effective_len = tl_len - (transition["duration"] if transition else 0.0)
@@ -243,6 +245,26 @@ def plan_to_ir(plan: dict, analyzed: list[dict], project_name: str) -> dict:
         "tracks": tracks,
         "render": None,
     }
+
+
+def carry_ir_settings(new_ir: dict, base_ir: dict | None) -> dict:
+    """重建 IR 后保留交付规格与字幕样式。
+
+    apply_output（render 规格）/ set_subtitle_style（字幕样式）直接写在 IR 上，
+    不在 plan.clips 里，故 plan_to_ir 重建会丢失——局部修订/加标题/智能裁切等
+    重建场景需把它们补回，避免"改一处丢竖屏/丢字幕样式"。
+    """
+    if not base_ir:
+        return new_ir
+    if base_ir.get("render"):
+        new_ir["render"] = dict(base_ir["render"])
+    old_style = next((t.get("style") for t in base_ir.get("tracks", [])
+                      if t.get("type") == "subtitle" and t.get("style")), None)
+    if old_style:
+        for t in new_ir.get("tracks", []):
+            if t.get("type") == "subtitle":
+                t["style"] = dict(old_style)
+    return new_ir
 
 
 async def _plan_llm_loop(messages: list[dict], analyzed: list[dict], fallback_name: str) -> dict:

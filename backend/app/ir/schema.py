@@ -70,6 +70,8 @@ class Clip(BaseModel):
     transition: Transition | None = None
     # 变速（v0.6）：>1 快放、<1 慢动作；时间线时长 = 素材段长 / speed
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    # 主体感知裁切焦点（M28）：0 最左 / 0.5 居中 / 1 最右；仅 fill=crop 时生效，None 即居中
+    crop_focus: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @property
     def timeline_len(self) -> float:

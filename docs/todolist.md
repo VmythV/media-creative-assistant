@@ -263,3 +263,12 @@
 - [x] 视觉编码：分段色（开场/铺垫/高潮/结尾/空镜）、标题卡黑底金条、转场紫点、变速洋红标签、字幕气泡、hover 详情
 - [x] ClipsPanel 时间线/列表切换（默认时间线）；表头总长/段数/转场数
 - [x] M27 验证：tsc 构建通过；faithful HTML 复刻 headless 截图确认（标题卡+5转场+0.5x最宽块+字幕气泡）
+
+## M28 竖屏主体感知裁切（backlog B21）
+
+- [x] IR Clip.crop_focus（0-1 水平焦点，None 居中，仅 fill=crop 生效，backward-compatible 不升版本）
+- [x] 渲染器 crop 分支按焦点偏移裁切窗口（逐片段构图图）；plan_to_ir 透传 crop_focus
+- [x] smart_crop：并发抽帧 + 视觉定位主体焦点 → 写 crop_focus + fill=crop → 新方案（跳过标题卡/单帧失败退居中）
+- [x] carry_ir_settings：修复重建 IR 丢交付规格/字幕样式的既有缺陷（局部修订/加标题/修订/智能裁切/修复全接入）
+- [x] _state_brief 标题卡 KeyError 修复；API POST /plans/{id}/smart-crop；对话 smart_crop 意图（23 种）+ 链式 remap
+- [x] M28 验证：pytest 5 项通过（110 全量，含竖屏保留回归 + 像素级焦点断言）；真实走查：改竖屏→智能裁切→渲染，成片填满 9:16 无模糊边
